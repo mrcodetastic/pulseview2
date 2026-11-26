@@ -568,6 +568,23 @@ uint64_t DecodeSignal::get_annotation_count(const Row* row, uint32_t segment_id)
 	return rd->get_annotation_count();
 }
 
+uint64_t DecodeSignal::get_approx_annotation_count(const Row* row,
+	uint32_t segment_id, uint64_t start_sample, uint64_t end_sample) const
+{
+	lock_guard<mutex> lock(output_mutex_);
+
+	if (segment_id >= segments_.size())
+		return 0;
+
+	const DecodeSegment* segment = &(segments_.at(segment_id));
+
+	auto row_it = segment->annotation_rows.find(row);
+	if (row_it == segment->annotation_rows.end())
+		return 0;
+
+	return row_it->second.get_approx_annotation_count(start_sample, end_sample);
+}
+
 void DecodeSignal::get_annotation_subset(deque<const Annotation*> &dest,
 	const Row* row, uint32_t segment_id, uint64_t start_sample,
 	uint64_t end_sample) const
@@ -588,6 +605,24 @@ void DecodeSignal::get_annotation_subset(deque<const Annotation*> &dest,
 		rd = &(row_it->second);
 
 	rd->get_annotation_subset(dest, start_sample, end_sample);
+}
+
+void DecodeSignal::get_annotation_lod(vector<AnnotationLodItem> &dest,
+	const Row* row, uint32_t segment_id, const vector<uint64_t> &pixel_samples,
+	int left_x) const
+{
+	lock_guard<mutex> lock(output_mutex_);
+
+	if (segment_id >= segments_.size())
+		return;
+
+	const DecodeSegment* segment = &(segments_.at(segment_id));
+
+	auto row_it = segment->annotation_rows.find(row);
+	if (row_it == segment->annotation_rows.end())
+		return;
+
+	row_it->second.get_annotation_lod(dest, pixel_samples, left_x);
 }
 
 void DecodeSignal::get_annotation_subset(deque<const Annotation*> &dest,

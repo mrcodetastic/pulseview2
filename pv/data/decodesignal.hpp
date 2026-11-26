@@ -46,6 +46,7 @@ using std::vector;
 using std::shared_ptr;
 
 using pv::data::decode::Annotation;
+using pv::data::decode::AnnotationLodItem;
 using pv::data::decode::DecodeBinaryClassInfo;
 using pv::data::decode::DecodeChannel;
 using pv::data::decode::Decoder;
@@ -161,6 +162,9 @@ public:
 
 	uint64_t get_annotation_count(const Row* row, uint32_t segment_id) const;
 
+	uint64_t get_approx_annotation_count(const Row* row, uint32_t segment_id,
+		uint64_t start_sample, uint64_t end_sample) const;
+
 	/**
 	 * Extracts annotations from a single row into a vector.
 	 * Note: The annotations may be unsorted and only annotations that fully
@@ -168,6 +172,10 @@ public:
 	 */
 	void get_annotation_subset(deque<const Annotation*> &dest, const Row* row,
 		uint32_t segment_id, uint64_t start_sample, uint64_t end_sample) const;
+
+	void get_annotation_lod(vector<AnnotationLodItem> &dest, const Row* row,
+		uint32_t segment_id, const vector<uint64_t> &pixel_samples,
+		int left_x) const;
 
 	/**
 	 * Extracts annotations from all rows into a vector.
