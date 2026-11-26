@@ -1030,6 +1030,20 @@ void AnalogSignal::on_neg_vdivs_changed(int vdivs)
 	}
 }
 
+int AnalogSignal::div_height() const
+{
+	return div_height_;
+}
+
+void AnalogSignal::set_div_height(int height)
+{
+	height = max(20, min(height, 1000));
+	if (height == div_height_)
+		return;
+
+	on_div_height_changed(height);
+}
+
 void AnalogSignal::on_div_height_changed(int height)
 {
 	div_height_ = height;

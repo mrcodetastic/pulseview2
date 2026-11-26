@@ -1531,24 +1531,12 @@ void View::adjust_top_margin()
 {
 	assert(viewport_);
 
-	const QSize areaSize = viewport_->size();
-
 	const pair<int, int> extents = v_extents();
 	const int top_margin = owner_visual_v_offset() + extents.first;
-	const int trace_bottom = owner_visual_v_offset() + extents.first + extents.second;
 
-	// Do we have empty space at the top while the last trace goes out of screen?
-	if ((top_margin > 0) && (trace_bottom > areaSize.height())) {
-		const int trace_height = extents.second - extents.first;
-
-		// Center everything vertically if there is enough space
-		if (areaSize.height() >= trace_height)
-			set_v_offset(extents.first -
-				((areaSize.height() - trace_height) / 2));
-		else
-			// Remove the top margin to make as many traces fit on screen as possible
-			set_v_offset(extents.first);
-	}
+	// Never leave empty space above the first trace
+	if (top_margin > 0)
+		set_v_offset(extents.first);
 }
 
 void View::update_scroll()
@@ -1584,19 +1572,24 @@ void View::update_scroll()
 
 	updating_scroll_ = false;
 
-	// Set the vertical scrollbar
+	// Set the vertical scrollbar: keep traces flush with the top and only
+	// enable scrolling when total trace height exceeds viewport height.
 	vscrollbar->setPageStep(areaSize.height());
-	vscrollbar->setSingleStep(areaSize.height() / 8);
+	vscrollbar->setSingleStep(max(1, areaSize.height() / 8));
 
 	const pair<int, int> extents = v_extents();
 
-	// Don't change the scrollbar range if there are no traces
 	if (extents.first != extents.second) {
-		int top_margin = ViewScrollMargin;
-		int btm_margin = ViewScrollMargin;
+		const int trace_height = extents.second - extents.first;
+		const int max_offset = max(extents.first,
+			extents.second - areaSize.height());
 
-		vscrollbar->setRange(extents.first - areaSize.height() + top_margin,
-			extents.second - btm_margin);
+		vscrollbar->setRange(extents.first, max_offset);
+
+		if (areaSize.height() >= trace_height)
+			set_v_offset(extents.first);
+	} else {
+		vscrollbar->setRange(0, 0);
 	}
 
 	if (scroll_needs_defaults_) {
@@ -1614,19 +1607,50 @@ void View::set_scroll_default()
 {
 	assert(viewport_);
 
-	const QSize areaSize = viewport_->size();
-
 	const pair<int, int> extents = v_extents();
-	const int trace_height = extents.second - extents.first;
+	// Always keep the first trace flush with the top under the time ruler
+	set_v_offset(extents.first);
+}
 
-	// Do all traces fit in the view?
-	if (areaSize.height() >= trace_height)
-		// Center all traces vertically
-		set_v_offset(extents.first -
-			((areaSize.height() - trace_height) / 2));
-	else
-		// Put the first trace at the top, letting the bottom ones overflow
-		set_v_offset(extents.first);
+void View::adjust_channel_height(int delta_steps)
+{
+	if (delta_steps == 0)
+		return;
+
+	constexpr int LogicStepPx = 6;
+	constexpr int LogicMinPx = 12;
+	constexpr int LogicMaxPx = 200;
+
+	constexpr int AnalogStepPx = 10;
+	constexpr int AnalogMinPx = 20;
+	constexpr int AnalogMaxPx = 200;
+
+	for (const shared_ptr<LogicSignal> &sig : list_by_type<LogicSignal>()) {
+		const int next_h = max(LogicMinPx,
+			min(LogicMaxPx, sig->signal_height() + delta_steps * LogicStepPx));
+		sig->set_signal_height(next_h);
+	}
+
+	for (const shared_ptr<AnalogSignal> &sig : list_by_type<AnalogSignal>()) {
+		const int next_h = max(AnalogMinPx,
+			min(AnalogMaxPx, sig->div_height() + delta_steps * AnalogStepPx));
+		sig->set_div_height(next_h);
+	}
+}
+
+void View::reset_channel_height()
+{
+	GlobalSettings settings;
+	const int default_logic_h =
+		settings.value(GlobalSettings::Key_View_DefaultLogicHeight).toInt();
+	const int default_div_h =
+		settings.value(GlobalSettings::Key_View_DefaultDivHeight).toInt();
+
+	for (const shared_ptr<LogicSignal> &sig : list_by_type<LogicSignal>())
+		sig->set_signal_height(default_logic_h);
+
+	for (const shared_ptr<AnalogSignal> &sig : list_by_type<AnalogSignal>())
+		sig->set_div_height(default_div_h);
 }
 
 void View::determine_if_header_was_shrunk()

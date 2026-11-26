@@ -699,6 +699,20 @@ void LogicSignal::on_trigger()
 	modify_trigger();
 }
 
+int LogicSignal::signal_height() const
+{
+	return signal_height_;
+}
+
+void LogicSignal::set_signal_height(int height)
+{
+	height = max(5, min(height, 1000));
+	if (height == signal_height_)
+		return;
+
+	on_signal_height_changed(height);
+}
+
 void LogicSignal::on_signal_height_changed(int height)
 {
 	signal_height_ = height;

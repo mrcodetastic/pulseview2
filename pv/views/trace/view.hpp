@@ -456,6 +456,9 @@ public:
 
 	void extents_changed(bool horz, bool vert);
 
+	void adjust_channel_height(int delta_steps);
+	void reset_channel_height();
+
 private Q_SLOTS:
 	void on_signal_name_changed();
 	void on_splitter_moved();

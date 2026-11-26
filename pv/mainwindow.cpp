@@ -113,6 +113,9 @@ MainWindow::MainWindow(DeviceManager &device_manager, QWidget *parent) :
 	menu_action_zoom_in_(nullptr),
 	menu_action_zoom_out_(nullptr),
 	menu_action_zoom_fit_(nullptr),
+	menu_action_increase_height_(nullptr),
+	menu_action_decrease_height_(nullptr),
+	menu_action_reset_height_(nullptr),
 	menu_action_show_cursors_(nullptr),
 	menu_action_compress_idle_(nullptr),
 	menu_action_sticky_scrolling_(nullptr),
@@ -824,7 +827,7 @@ void MainWindow::setup_menu_bar()
 
 	menu_action_zoom_in_ = view_menu->addAction(
 		QIcon::fromTheme("zoom-in", QIcon(":/icons/zoom-in.png")), tr("Zoom &In"));
-	set_menu_hint_shortcut(menu_action_zoom_in_, QKeySequence::ZoomIn);
+	set_menu_hint_shortcut(menu_action_zoom_in_, QKeySequence(Qt::Key_Plus));
 	connect(menu_action_zoom_in_, &QAction::triggered, this, [this] {
 		if (auto mb = active_main_bar())
 			mb->action_view_zoom_in()->trigger();
@@ -832,7 +835,7 @@ void MainWindow::setup_menu_bar()
 
 	menu_action_zoom_out_ = view_menu->addAction(
 		QIcon::fromTheme("zoom-out", QIcon(":/icons/zoom-out.png")), tr("Zoom &Out"));
-	set_menu_hint_shortcut(menu_action_zoom_out_, QKeySequence::ZoomOut);
+	set_menu_hint_shortcut(menu_action_zoom_out_, QKeySequence(Qt::Key_Minus));
 	connect(menu_action_zoom_out_, &QAction::triggered, this, [this] {
 		if (auto mb = active_main_bar())
 			mb->action_view_zoom_out()->trigger();
@@ -845,6 +848,43 @@ void MainWindow::setup_menu_bar()
 	connect(menu_action_zoom_fit_, &QAction::triggered, this, [this] {
 		if (auto mb = active_main_bar())
 			mb->action_view_zoom_fit()->trigger();
+	});
+
+	view_menu->addSeparator();
+
+	const auto active_trace_view = [this]() -> shared_ptr<views::trace::View> {
+		if (auto v = dynamic_pointer_cast<views::trace::View>(get_active_view()))
+			return v;
+		if (auto s = active_session())
+			return dynamic_pointer_cast<views::trace::View>(s->main_view());
+		return nullptr;
+	};
+
+	menu_action_increase_height_ = view_menu->addAction(tr("Increase Channel &Height"));
+	menu_action_increase_height_->setShortcuts({
+		QKeySequence(Qt::CTRL | Qt::Key_Plus),
+		QKeySequence(Qt::CTRL | Qt::Key_Equal)
+	});
+	menu_action_increase_height_->setStatusTip(tr("Make signal channels taller for easier viewing"));
+	connect(menu_action_increase_height_, &QAction::triggered, this, [active_trace_view] {
+		if (auto tv = active_trace_view())
+			tv->adjust_channel_height(1);
+	});
+
+	menu_action_decrease_height_ = view_menu->addAction(tr("Decrease Channel H&eight"));
+	menu_action_decrease_height_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Minus));
+	menu_action_decrease_height_->setStatusTip(tr("Make signal channels shorter to fit more on screen"));
+	connect(menu_action_decrease_height_, &QAction::triggered, this, [active_trace_view] {
+		if (auto tv = active_trace_view())
+			tv->adjust_channel_height(-1);
+	});
+
+	menu_action_reset_height_ = view_menu->addAction(tr("Reset Channel Hei&ght"));
+	menu_action_reset_height_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
+	menu_action_reset_height_->setStatusTip(tr("Restore default signal channel height"));
+	connect(menu_action_reset_height_, &QAction::triggered, this, [active_trace_view] {
+		if (auto tv = active_trace_view())
+			tv->reset_channel_height();
 	});
 
 	view_menu->addSeparator();
@@ -1067,6 +1107,9 @@ void MainWindow::update_menu_state()
 		const QSignalBlocker b(menu_action_zoom_fit_);
 		menu_action_zoom_fit_->setChecked(mb && mb->action_view_zoom_fit()->isChecked());
 	}
+	if (menu_action_increase_height_) menu_action_increase_height_->setEnabled(has_session);
+	if (menu_action_decrease_height_) menu_action_decrease_height_->setEnabled(has_session);
+	if (menu_action_reset_height_) menu_action_reset_height_->setEnabled(has_session);
 	if (menu_action_show_cursors_) {
 		menu_action_show_cursors_->setEnabled(has_session);
 		const QSignalBlocker b(menu_action_show_cursors_);
