@@ -305,12 +305,32 @@ shared_ptr<views::ViewBase> MainWindow::add_view(views::ViewType type,
 			pop_out_btn->setToolTip(tr("Pop out view into its own window"));
 			main_bar->addWidget(pop_out_btn);
 
-			connect(pop_out_btn, &QToolButton::clicked, dock, [dock](bool checked) {
-				dock->setFloating(checked);
+			connect(pop_out_btn, &QToolButton::clicked, dock, [dock, empty_title_bar](bool checked) {
+				if (checked) {
+					// Remove the custom title bar BEFORE floating so Qt creates
+					// a native OS-managed window frame instead of a frameless window.
+					dock->setTitleBarWidget(nullptr);
+					empty_title_bar->hide();
+					dock->setFloating(true);
+				} else {
+					dock->setFloating(false);
+				}
 			});
 			connect(dock, &QDockWidget::topLevelChanged, this,
 				[dock, empty_title_bar, pop_out_btn](bool floating) {
-					dock->setTitleBarWidget(floating ? nullptr : empty_title_bar);
+					if (floating) {
+						if (dock->titleBarWidget() != nullptr) {
+							dock->setTitleBarWidget(nullptr);
+							empty_title_bar->hide();
+						}
+						if (dock->windowFlags() & Qt::FramelessWindowHint) {
+							dock->setWindowFlag(Qt::FramelessWindowHint, false);
+							dock->show();
+						}
+					} else {
+						empty_title_bar->show();
+						dock->setTitleBarWidget(empty_title_bar);
+					}
 					pop_out_btn->setChecked(floating);
 					pop_out_btn->setToolTip(floating
 						? tr("Dock view back into session tab")
