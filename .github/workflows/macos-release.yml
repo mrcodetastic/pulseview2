@@ -1,0 +1,285 @@
+name: macOS Release Build (arm64)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag name (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+      prerelease:
+        description: 'Mark GitHub Release as pre-release'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos-arm64:
+    name: Build PulseView2 macOS (Apple Silicon arm64 Release)
+    runs-on: macos-14
+
+    env:
+      SR_PREFIX: /tmp/sr-prefix
+      MACOSX_DEPLOYMENT_TARGET: '14.0'
+
+    steps:
+      - name: Checkout PulseView2
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Homebrew dependencies
+        run: |
+          set -e
+          brew update
+          brew install \
+            autoconf \
+            autoconf-archive \
+            automake \
+            libtool \
+            pkgconf \
+            cmake \
+            ninja \
+            doxygen \
+            boost \
+            glibmm@2.66 \
+            libzip \
+            libserialport \
+            libusb \
+            libftdi \
+            hidapi \
+            nettle \
+            python@3.12 \
+            qt \
+            sdcc \
+            dylibbundler
+
+      - name: Configure build environment
+        run: |
+          set -e
+          mkdir -p "$SR_PREFIX"
+          BREW_PREFIX="$(brew --prefix)"
+          QT_PREFIX="$(brew --prefix qt)"
+          GLIBMM_PREFIX="$(brew --prefix glibmm@2.66)"
+          SIGCPP_PREFIX="$(brew --prefix libsigc++@2)"
+          PY_PREFIX="$(brew --prefix python@3.12)"
+
+          echo "BREW_PREFIX=$BREW_PREFIX" >> "$GITHUB_ENV"
+          echo "QT_PREFIX=$QT_PREFIX" >> "$GITHUB_ENV"
+          echo "PY_PREFIX=$PY_PREFIX" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$SR_PREFIX/lib/pkgconfig:$GLIBMM_PREFIX/lib/pkgconfig:$SIGCPP_PREFIX/lib/pkgconfig:$PY_PREFIX/Frameworks/Python.framework/Versions/3.12/lib/pkgconfig:$BREW_PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "PATH=$QT_PREFIX/bin:$PY_PREFIX/libexec/bin:$BREW_PREFIX/bin:$PATH" >> "$GITHUB_ENV"
+
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "ARTIFACT_VERSION=${{ github.ref_name }}" >> "$GITHUB_ENV"
+          else
+            echo "ARTIFACT_VERSION=${{ inputs.release_tag }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build libsigrok (C + C++ bindings)
+        run: |
+          set -e
+          mkdir -p /tmp/sr-build
+          git clone --depth=1 https://github.com/sigrokproject/libsigrok.git /tmp/sr-build/libsigrok
+          cd /tmp/sr-build/libsigrok
+          ./autogen.sh
+          ./configure \
+            --prefix="$SR_PREFIX" \
+            --enable-cxx \
+            --disable-python \
+            --disable-java \
+            --disable-ruby
+          make -j"$(sysctl -n hw.ncpu)"
+          make install
+
+      - name: Build libsigrokdecode (with protocol decoders)
+        run: |
+          set -e
+          git clone --depth=1 https://github.com/sigrokproject/libsigrokdecode.git /tmp/sr-build/libsigrokdecode
+          cd /tmp/sr-build/libsigrokdecode
+          ./autogen.sh
+          ./configure --prefix="$SR_PREFIX"
+          make -j"$(sysctl -n hw.ncpu)"
+          make install
+
+      - name: Build and install sigrok firmware (including fx2lafw)
+        run: |
+          set -e
+          mkdir -p "$SR_PREFIX/share/sigrok-firmware"
+
+          git clone --depth=1 https://github.com/sigrokproject/sigrok-firmware.git /tmp/sr-build/sigrok-firmware
+          cd /tmp/sr-build/sigrok-firmware
+          ./autogen.sh
+          ./configure --prefix="$SR_PREFIX"
+          make install
+
+          if (
+            git clone --depth=1 https://github.com/sigrokproject/sigrok-firmware-fx2lafw.git /tmp/sr-build/sigrok-firmware-fx2lafw
+            cd /tmp/sr-build/sigrok-firmware-fx2lafw
+            ./autogen.sh
+            ./configure --prefix="$SR_PREFIX"
+            make -j"$(sysctl -n hw.ncpu)"
+            make install
+          ); then
+            echo "Built sigrok-firmware-fx2lafw from source"
+          else
+            echo "Falling back to official sigrok-firmware-fx2lafw binary tarball"
+            curl -fsSL "https://sigrok.org/download/binary/sigrok-firmware-fx2lafw/sigrok-firmware-fx2lafw-bin-0.1.7.tar.gz" -o /tmp/sr-build/fx2lafw.tar.gz
+            tar -xzf /tmp/sr-build/fx2lafw.tar.gz -C /tmp/sr-build
+            cp /tmp/sr-build/sigrok-firmware-fx2lafw-bin-*/*.fw "$SR_PREFIX/share/sigrok-firmware/"
+          fi
+
+          test -f "$SR_PREFIX/share/sigrok-firmware/fx2lafw-saleae-logic.fw"
+
+      - name: Build PulseView2
+        run: |
+          set -e
+          cmake -S . -B build-macos -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/dist/stage" \
+            -DCMAKE_PREFIX_PATH="$QT_PREFIX;$SR_PREFIX;$BREW_PREFIX" \
+            -DSTATIC_PKGDEPS_LIBS=FALSE \
+            -DDISABLE_WERROR=TRUE \
+            -DENABLE_TESTS=FALSE
+          ninja -C build-macos
+          ninja -C build-macos install
+
+      - name: Assemble PulseView2.app bundle and package DMG
+        run: |
+          set -e
+          APP="$PWD/dist/PulseView2.app"
+          rm -rf "$APP" release-assets dmg-root
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/share" "$APP/Contents/Frameworks"
+
+          cp "$PWD/dist/stage/bin/pulseview" "$APP/Contents/MacOS/pulseview"
+          chmod +x "$APP/Contents/MacOS/pulseview"
+
+          # Generate macOS .icns icon from icons/pulseview.png
+          ICONSET="/tmp/pulseview.iconset"
+          rm -rf "$ICONSET"
+          mkdir -p "$ICONSET"
+          for sz in 16 32 128 256 512; do
+            sips -z $sz $sz icons/pulseview.png --out "$ICONSET/icon_${sz}x${sz}.png" >/dev/null
+            sz2=$((sz * 2))
+            sips -z $sz2 $sz2 icons/pulseview.png --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null
+          done
+          iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/pulseview.icns"
+
+          # Write Info.plist
+          cat > "$APP/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleExecutable</key>
+            <string>pulseview</string>
+            <key>CFBundleIconFile</key>
+            <string>pulseview.icns</string>
+            <key>CFBundleIdentifier</key>
+            <string>org.sigrok.PulseView2</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>PulseView2</string>
+            <key>CFBundleDisplayName</key>
+            <string>PulseView2</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${ARTIFACT_VERSION}</string>
+            <key>CFBundleVersion</key>
+            <string>${ARTIFACT_VERSION}</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>${MACOSX_DEPLOYMENT_TARGET}</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+
+          # Bundle sigrok firmware and protocol decoders
+          cp -R "$SR_PREFIX/share/sigrok-firmware" "$APP/Contents/Resources/share/"
+          cp -R "$SR_PREFIX/share/libsigrokdecode" "$APP/Contents/Resources/share/"
+
+          # Bundle Python stdlib for libsigrokdecode
+          PY_STDLIB="$("$PY_PREFIX/bin/python3.12" -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')"
+          mkdir -p "$APP/Contents/Resources/python/lib"
+          cp -R "$PY_STDLIB" "$APP/Contents/Resources/python/lib/"
+          find "$APP/Contents/Resources/python" -type d -name '__pycache__' -exec rm -rf {} + || true
+          rm -rf "$APP/Contents/Resources/python/lib/python3.12/test" \
+                 "$APP/Contents/Resources/python/lib/python3.12/tkinter" \
+                 "$APP/Contents/Resources/python/lib/python3.12/idlelib" || true
+
+          # Bundle Qt6 frameworks and plugins
+          "$QT_PREFIX/bin/macdeployqt" "$APP" -always-overwrite
+
+          # Bundle non-Qt dylibs (libsigrok, libsigrokdecode, glibmm, libusb, Python, etc.)
+          dylibbundler -od -b \
+            -x "$APP/Contents/MacOS/pulseview" \
+            -d "$APP/Contents/Frameworks" \
+            -p "@executable_path/../Frameworks/" \
+            -s "$SR_PREFIX/lib" \
+            -s "$BREW_PREFIX/lib" \
+            -s "$PY_PREFIX/Frameworks/Python.framework/Versions/3.12/lib"
+
+          # Ad-hoc codesign (required for Apple Silicon arm64 execution)
+          codesign --force --deep --sign - "$APP"
+
+          # Package into a DMG with an Applications symlink
+          mkdir -p dmg-root release-assets
+          cp -R "$APP" dmg-root/
+          ln -s /Applications dmg-root/Applications
+          hdiutil create \
+            -volname "PulseView2" \
+            -srcfolder dmg-root \
+            -ov -format UDZO \
+            "release-assets/pulseview2-${ARTIFACT_VERSION}-macos-arm64.dmg"
+          ls -lh release-assets/
+
+      - name: Upload macOS release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulseview2-macos-arm64-release
+          path: release-assets/*
+
+  publish-release:
+    name: Publish macOS Release
+    needs: build-macos-arm64
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download macOS release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: pulseview2-macos-arm64-release
+          path: release-assets
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=${{ inputs.prerelease }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: "PulseView2 (${{ steps.tag.outputs.name }})"
+          prerelease: ${{ steps.tag.outputs.prerelease }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/*.dmg
