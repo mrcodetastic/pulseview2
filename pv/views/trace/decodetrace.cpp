@@ -303,6 +303,10 @@ void DecodeTrace::paint_mid(QPainter &p, ViewItemPaintParams &pp)
 	visible_rows = 0;
 	int y = get_visual_y();
 
+	const int view_width = max(1, pp.width());
+	const uint64_t max_direct_annotations = static_cast<uint64_t>(view_width) * 4;
+	vector<uint64_t> pixel_samples;
+
 	for (DecodeTraceRow& r : rows_) {
 		// If the row is hidden, we don't want to fetch annotations
 		assert(r.decode_row);
@@ -310,6 +314,48 @@ void DecodeTrace::paint_mid(QPainter &p, ViewItemPaintParams &pp)
 		if ((!r.decode_row->decoder()->visible()) ||
 			((!r.decode_row->visible() && (!show_hidden_rows_) && (!r.expanding) && (!r.expanded) && (!r.collapsing)))) {
 			r.currently_visible = false;
+			continue;
+		}
+
+		const uint64_t approx_count = decode_signal_->get_approx_annotation_count(
+			r.decode_row, current_segment_, sample_range.first, sample_range.second);
+
+		if (approx_count > max_direct_annotations) {
+			if (pixel_samples.empty()) {
+				const double rate = decode_signal_->get_samplerate() > 0 ?
+					decode_signal_->get_samplerate() : 1.0;
+				const auto origin = decode_signal_->start_time();
+				const auto *view = owner_->view();
+				pixel_samples.resize(static_cast<size_t>(view_width) + 1);
+				for (int i = 0; i <= view_width; ++i) {
+					const uint64_t s = max(pv::util::Timestamp(0),
+						(view->pixel_to_time(pp.left() + i) - origin) * rate).convert_to<uint64_t>();
+					pixel_samples[static_cast<size_t>(i)] = min(s, sample_range.second);
+				}
+			}
+
+			vector<pv::data::decode::AnnotationLodItem> lod_items;
+			decode_signal_->get_annotation_lod(lod_items, r.decode_row,
+				current_segment_, pixel_samples, pp.left());
+
+			r.currently_visible = !lod_items.empty();
+			if (!r.currently_visible) {
+				size_t ann_count = decode_signal_->get_annotation_count(r.decode_row, current_segment_);
+				r.currently_visible = ((always_show_all_rows_ || r.has_hidden_classes) &&
+					(ann_count > 0)) || r.expanded;
+			}
+
+			if (r.currently_visible) {
+				for (const auto &item : lod_items) {
+					if (item.is_block)
+						draw_annotation_block(item.start_x, item.end_x,
+							item.ann_class, item.uniform_class, p, y, r);
+					else if (item.ann)
+						draw_annotation(item.ann, p, pp, y, r);
+				}
+				y += r.height;
+				visible_rows++;
+			}
 			continue;
 		}
 
