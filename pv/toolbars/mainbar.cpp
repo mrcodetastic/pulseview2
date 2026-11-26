@@ -141,17 +141,17 @@ MainBar::MainBar(Session &session, QWidget *parent, pv::views::trace::View *view
 	setObjectName(QString::fromUtf8("MainBar"));
 	setWindowTitle(tr("Capture Toolbar"));
 	setContextMenuPolicy(Qt::PreventContextMenu);
-	setContentsMargins(2, 1, 2, 1);
+	setContentsMargins(2, 0, 2, 0);
 	setStyleSheet(
-		"QToolBar#MainBar { spacing: 4px; padding: 1px 4px; }"
-		"QToolBar#MainBar QToolButton { padding: 2px 4px; }");
+		"QToolBar#MainBar { spacing: 4px; padding: 0px 4px; }"
+		"QToolBar#MainBar QToolButton { padding: 1px 4px; }");
 
 	view_toolbar_->setObjectName(QString::fromUtf8("ViewBar"));
 	view_toolbar_->setContextMenuPolicy(Qt::PreventContextMenu);
-	view_toolbar_->setContentsMargins(2, 1, 2, 1);
+	view_toolbar_->setContentsMargins(2, 0, 2, 0);
 	view_toolbar_->setStyleSheet(
-		"QToolBar#ViewBar { spacing: 6px; padding: 1px 4px; }"
-		"QToolBar#ViewBar QToolButton { padding: 2px 7px; }");
+		"QToolBar#ViewBar { spacing: 6px; padding: 0px 4px; }"
+		"QToolBar#ViewBar QToolButton { padding: 1px 7px; }");
 
 	// Per-session Run/Stop transport button (travels with floating session windows)
 	action_run_stop_->setText(tr(" Run"));
@@ -168,7 +168,7 @@ MainBar::MainBar(Session &session, QWidget *parent, pv::views::trace::View *view
 	run_stop_button_->setIconSize(QSize(18, 18));
 	run_stop_button_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 	run_stop_button_->setStyleSheet(
-		"QToolButton#runStopButton { font-weight: 600; padding: 2px 10px 2px 8px; }");
+		"QToolButton#runStopButton { font-weight: 600; padding: 1px 10px 1px 8px; }");
 
 	// Actions
 	action_new_view_->setText(tr("New &View"));
@@ -460,6 +460,7 @@ void MainBar::update_run_stop_button()
 {
 	const Session::capture_state state = session_.get_capture_state();
 	const bool file_device = session_.using_file_device();
+	const bool has_device = session_.device() && session_.device()->device();
 	const bool reconnect_needed = session_.device_needs_reconnect();
 	const bool stopping = session_.stop_requested();
 
@@ -474,15 +475,17 @@ void MainBar::update_run_stop_button()
 		action_run_stop_->setText(tr(" Stop"));
 	}
 
-	const bool enabled = !reconnect_needed && !stopping;
+	const bool enabled = has_device && !reconnect_needed && !stopping;
 	action_run_stop_->setEnabled(enabled);
 	run_stop_button_->setEnabled(enabled);
-	const QString tip = reconnect_needed ?
+	const QString tip = !has_device ?
+		tr("No device connected. Select or connect a device first.") :
+		(reconnect_needed ?
 		tr("Device disconnected. Reconnect USB, then use Connect to Device, Scan, and select the analyzer again.") :
 		(stopping ? tr("Stopping acquisition...") :
 		(state == Session::AwaitingTrigger ? tr("Waiting for trigger — click to cancel (Space)") :
 		(state == Session::Running ? tr("Stop Acquisition (Space)") :
-		(file_device ? tr("Reload Capture File (Space)") : tr("Start Acquisition (Space)")))));
+		(file_device ? tr("Reload Capture File (Space)") : tr("Start Acquisition (Space)"))))));
 	action_run_stop_->setToolTip(tip);
 	run_stop_button_->setToolTip(tip);
 }
