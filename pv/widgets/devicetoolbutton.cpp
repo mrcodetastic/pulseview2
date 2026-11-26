@@ -62,7 +62,7 @@ DeviceToolButton::DeviceToolButton(QWidget *parent,
 		"  border: 1px solid palette(mid);"
 		"  border-radius: 3px;"
 		"  background-color: palette(button);"
-		"  padding: 2px 22px 2px 8px;"
+		"  padding: 1px 22px 1px 8px;"
 		"}"
 		"QToolButton#deviceSelectorButton:hover {"
 		"  border-color: palette(highlight);"

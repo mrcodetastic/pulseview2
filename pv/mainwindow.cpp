@@ -46,7 +46,9 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QStatusBar>
+#include <QStyle>
 #include <QTableWidget>
+#include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -203,6 +205,12 @@ shared_ptr<views::ViewBase> MainWindow::add_view(views::ViewType type,
 
 	QDockWidget* dock = new QDockWidget(title, main_window);
 	dock->setObjectName(title);
+	dock->setStyleSheet(
+		"QDockWidget::title {"
+		"  text-align: left;"
+		"  padding: 3px 8px;"
+		"  font-weight: 600;"
+		"}");
 	main_window->addDockWidget(Qt::TopDockWidgetArea, dock);
 
 	// Insert a QMainWindow into the dock widget to allow for a tool bar
@@ -277,6 +285,37 @@ shared_ptr<views::ViewBase> MainWindow::add_view(views::ViewType type,
 			 * so we can confirm with the user first. Regular views don't
 			 * need this */
 			close_btn->disconnect(SIGNAL(clicked()), dock, SLOT(close()));
+
+			/* Hide the redundant "Session X" title bar while docked
+			 * (since the tab already shows it), and restore it if popped
+			 * out into a floating window. Provide a compact pop-out
+			 * button on the right side of MainBar. */
+			QWidget *empty_title_bar = new QWidget(dock);
+			dock->setTitleBarWidget(empty_title_bar);
+
+			QWidget *spacer = new QWidget(main_bar.get());
+			spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+			main_bar->addWidget(spacer);
+
+			QToolButton *pop_out_btn = new QToolButton(main_bar.get());
+			pop_out_btn->setAutoRaise(true);
+			pop_out_btn->setCheckable(true);
+			pop_out_btn->setIcon(style()->standardIcon(QStyle::SP_TitleBarNormalButton));
+			pop_out_btn->setIconSize(QSize(14, 14));
+			pop_out_btn->setToolTip(tr("Pop out view into its own window"));
+			main_bar->addWidget(pop_out_btn);
+
+			connect(pop_out_btn, &QToolButton::clicked, dock, [dock](bool checked) {
+				dock->setFloating(checked);
+			});
+			connect(dock, &QDockWidget::topLevelChanged, this,
+				[dock, empty_title_bar, pop_out_btn](bool floating) {
+					dock->setTitleBarWidget(floating ? nullptr : empty_title_bar);
+					pop_out_btn->setChecked(floating);
+					pop_out_btn->setToolTip(floating
+						? tr("Dock view back into session tab")
+						: tr("Pop out view into its own window"));
+				});
 		} else {
 			/* Additional view, create a standard bar */
 			pv::views::trace::StandardBar *standard_bar =
@@ -552,6 +591,9 @@ void MainWindow::setup_ui()
 
 	session_selector_.setTabsClosable(true);
 	session_selector_.setDocumentMode(true);
+	QWidget *tab_left_spacer = new QWidget(&session_selector_);
+	tab_left_spacer->setFixedSize(6, 1);
+	session_selector_.setCornerWidget(tab_left_spacer, Qt::TopLeftCorner);
 
 	connect(&session_selector_, SIGNAL(tabCloseRequested(int)),
 		this, SLOT(on_tab_close_requested(int)));
@@ -957,9 +999,10 @@ void MainWindow::update_acq_button(Session *session)
 			menu_action_run_stop_->setText(tr("&Stop"));
 		}
 
+		const bool has_device = session && session->device() && session->device()->device();
 		const bool reconnect_needed = session && session->device_needs_reconnect();
 		const bool stopping = session && session->stop_requested();
-		menu_action_run_stop_->setEnabled(session && !reconnect_needed && !stopping);
+		menu_action_run_stop_->setEnabled(has_device && !reconnect_needed && !stopping);
 	}
 
 	update_menu_state();
@@ -1194,7 +1237,8 @@ void MainWindow::on_run_stop_for_session(Session *target_session)
 		update_acq_button(last_focused_session_.get());
 	} else {
 		Session *session = target_session ? target_session : last_focused_session_.get();
-		if (!session || session->device_needs_reconnect() || session->stop_requested())
+		if (!session || !session->device() || !session->device()->device() ||
+			session->device_needs_reconnect() || session->stop_requested())
 			return;
 
 		switch (session->get_capture_state()) {
