@@ -210,6 +210,27 @@ int main(int argc, char *argv[])
 		if (QFileInfo::exists(app_dir.filePath("lib")))
 			set_env_if_missing("PYTHONHOME", app_dir.absolutePath());
 	}
+#elif defined(__APPLE__)
+	{
+		const QDir app_dir(QCoreApplication::applicationDirPath());
+		const QDir res_dir(app_dir.filePath("../Resources"));
+		const auto set_env_if_missing = [](const char *name, const QString &dir_path) {
+			if (qEnvironmentVariableIsEmpty(name) && QFileInfo::exists(dir_path)) {
+				const QByteArray native = QDir::toNativeSeparators(dir_path).toUtf8();
+				qputenv(name, native);
+				g_setenv(name, native.constData(), FALSE);
+			}
+		};
+
+		set_env_if_missing("SIGROK_FIRMWARE_DIR",
+			res_dir.filePath("share/sigrok-firmware"));
+		set_env_if_missing("SIGROKDECODE_DIR",
+			res_dir.filePath("share/libsigrokdecode/decoders"));
+
+		const QString py_home = res_dir.filePath("python");
+		if (QFileInfo::exists(py_home))
+			set_env_if_missing("PYTHONHOME", py_home);
+	}
 #endif
 
 	// Parse arguments
