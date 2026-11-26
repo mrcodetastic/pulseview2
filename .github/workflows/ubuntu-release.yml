@@ -22,12 +22,12 @@ permissions:
 env:
   PKG_NAME: pulseview2
   PKG_RELEASE: 1
-  UBUNTU_CODENAME: noble
+  UBUNTU_CODENAME: resolute
 
 jobs:
   build-ubuntu-amd64:
-    name: Build PulseView2 Ubuntu 24.04 (amd64 .deb)
-    runs-on: ubuntu-24.04
+    name: Build PulseView2 Ubuntu 26.04 (amd64 .deb)
+    runs-on: ubuntu-26.04
     timeout-minutes: 120
 
     steps:
@@ -46,7 +46,7 @@ jobs:
           echo "RELEASE_TAG=${TAG}" >> "$GITHUB_ENV"
           echo "PKG_VERSION=${TAG#v}" >> "$GITHUB_ENV"
 
-      - name: Build .deb in Ubuntu 24.04 container
+      - name: Build .deb in Ubuntu 26.04 container
         run: |
           docker run --rm --platform linux/amd64 \
             -v "${{ github.workspace }}:/src" \
@@ -231,7 +231,7 @@ jobs:
           Section: electronics
           Priority: optional
           Homepage: https://github.com/mrcodetastic/pulseview2
-          Description: PulseView2 + complete sigrok stack (Ubuntu 24.04)
+          Description: PulseView2 + complete sigrok stack (Ubuntu 26.04)
            Complete sigrok suite including PulseView2 (Qt6-based logic analyzer
            GUI), sigrok-cli, libsigrok, libsigrokdecode, libserialport,
            and fx2lafw firmware for FX2-based logic analyzers.
@@ -255,7 +255,7 @@ jobs:
           POSTRM
               chmod 755 ${PKG_ROOT}/DEBIAN/postrm
 
-              DEB_FILE="/output/${PKG_NAME}_${PKG_VERSION}-${PKG_RELEASE}_ubuntu24.04_${ARCH}.deb"
+              DEB_FILE="/output/${PKG_NAME}_${PKG_VERSION}-${PKG_RELEASE}_ubuntu26.04_${ARCH}.deb"
               dpkg-deb --build ${PKG_ROOT} ${DEB_FILE}
 
               ls -lh ${DEB_FILE}
@@ -303,7 +303,7 @@ jobs:
       - name: Upload Ubuntu release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: pulseview2-ubuntu24.04-amd64-release
+          name: pulseview2-ubuntu26.04-amd64-release
           path: output/*.deb
 
   publish-release:
@@ -315,7 +315,7 @@ jobs:
       - name: Download Ubuntu release artifacts
         uses: actions/download-artifact@v4
         with:
-          name: pulseview2-ubuntu24.04-amd64-release
+          name: pulseview2-ubuntu26.04-amd64-release
           path: release-assets
 
       - name: Determine release tag
