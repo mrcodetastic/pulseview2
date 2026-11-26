@@ -1,45 +1,42 @@
 # PulseView2
 
-**Reviving the pulse in PulseView.**
+**Bringing the pulse back to PulseView.**
 
 **PulseView2** is an actively maintained fork of the open-source [sigrok](https://sigrok.org/) **PulseView** — the Qt-based logic analyzer, oscilloscope, and mixed-signal oscilloscope (MSO) graphical user interface.
 
-Upstream PulseView has accumulated years of valuable community bugfixes, hardware improvements, and UI enhancements sitting unmerged across pull requests and independent forks. **PulseView2** exists to bring those improvements together into a cohesive, stable, modern build with automated releases — putting the *pulse* back into PulseView.
+For years, upstream PulseView has accumulated valuable community bugfixes, hardware improvements, and usability enhancements left unmerged across pull requests and independent forks, while modern toolchains and OS releases moved on. **PulseView2** brings those improvements together with a cleaner Qt 6 UI, major rendering performance upgrades, and automated cross-platform releases — putting the *pulse* back into PulseView.
 
 ---
 
-## Key Enhancements Over Upstream PulseView
+## Highlights & Enhancements Over Upstream PulseView
 
-### Device & Hardware Integration
-- **Dynamic sample rate & sample count updates:** Automatically refreshes available sample rates and sample counts when digital/analog channels are toggled (critical for analyzers whose maximum rate depends on active channel count, such as Sipeed SLogic and Hantek devices).
-- **Expanded device configuration bindings:** Added support for writable `SR_CONF_NUM_LOGIC_CHANNELS` and `SR_CONF_TEST_MODE` device options, plus live trace updates when device configuration changes.
-- **Clean serial device lifecycle:** Properly closes hardware devices when a session is destroyed (preventing leaked/locked serial ports) and preserves already-open devices across driver rescans.
-- **SLogic channel palette:** 8-color-per-group digital channel color palette for clearer grouping on SLogic analyzers.
+### Modernized UI & Workflow
+- **Cleaner layout & navigation:** Full application menu bar, live status bar, compact toolbars, and tabbed sessions with a one-click pop-out button to detach any view into a native OS window.
+- **Smarter viewport & channel sizing:** Traces sit flush beneath the time ruler with an auto-hiding vertical scrollbar (only shown when channels overflow), plus browser-style **Increase / Decrease / Reset Channel Height** controls (`Ctrl++`, `Ctrl+-`, `Ctrl+0`) independent of horizontal time-axis zoom (`+` / `-`).
+- **Compress Idle intervals:** Collapse long dead/idle stretches between bursts of signal activity so bursts can be inspected side-by-side.
+- **Faster & cleaner cursor snapping:** Improved cursor snapping on large captures with nearest-sample snapping between edges, plus fixed ruler context-menu timestamps and *Trigger is zero time* alignment.
+- **Classic PulseView channel palette:** Preserves the familiar resistor-code digital channel colors with automatic high-contrast label text.
 
-### Waveform View, Cursors & UI Polish
-- **Faster & cleaner cursor snapping:** Improved cursor snapping performance on large captures, with nearest-sample snapping (matching DSView behavior) when dragging cursors between edges.
-- **Ruler context-menu fixes:** Fixed timestamp calculation for *Create Marker* and *Set Zero Position* from the ruler popup menu (previously read an invalidated mouse-down position).
-- **Trigger-as-zero-time fix:** Fixed zero-offset calculation and reset behavior when captures stop with *Trigger is zero time* enabled.
-- **Analog signal min/max fix:** Properly initializes and resets analog min/max display values on capture clear, eliminating garbage/NaN SI prefixes when autoranging is disabled.
-- **Standardized platform shortcuts:** Migrated core menu shortcuts (`Open`, `Save`, `Close`, `Quit`) to Qt `QKeySequence::StandardKey` constants for native macOS (`Cmd`) and cross-platform consistency.
-- **Toolbar segment-mode fix:** Fixed the *Display a single segment* toolbar action signal connection.
-- **Desktop file integration:** Updated `org.sigrok.PulseView.desktop` (`Exec=pulseview %F`) so `.sr` sigrok session files open directly in PulseView from file managers.
+### Protocol Decoder Performance & Stability
+- **Responsive high-density decoding:** Binary-search annotation lookups and pixel-bucketed level-of-detail (LOD) rendering keep the UI smooth even when decoders (such as edge counters or long bus captures) emit hundreds of thousands of annotations.
+- **Hardened memory & session lifecycle:** Fixed protocol decoder shutdown races and paused-restart deadlocks, hardened segment memory allocation against fault conditions, improved `.pvs` session save/restore, and added proper UI error reporting for export failures.
 
-### Stability, Memory Safety & Sessions
-- **Clean session setup save/restore:** Clears stale keys when overwriting `.pvs` setup files and tears down existing secondary views, protocol decoders, and math signals before restoring — preventing duplicate signals on reload.
-- **Protocol decoder shutdown safety:** Fixed a use-after-free race condition during decoder teardown (joining decoder threads before destroying the `srd` session), resolved a paused-restart deadlock, and zero-initialized decoder segment progress counters.
-- **Segment allocation fault safety:** Hardened `Segment` chunk allocation and compaction with `std::unique_ptr` ownership semantics to prevent double-free / use-after-free on `std::bad_alloc` (verified with a 31-case fault-injection test suite).
-- **Export thread error reporting:** Catches export worker thread creation failures in `StoreSession` and surfaces a proper UI error dialog instead of crashing.
+### Hardware & Capture Improvements
+- **Dynamic sample rate & count updates:** Automatically refreshes supported sample rates and sample counts as channels are toggled (essential for analyzers whose maximum rate depends on active channel count).
+- **Safer capture & device lifecycle:** Disables *Run* when no device is connected, cleanly closes serial/USB devices on session teardown, preserves open devices across rescans, and improves reconnect handling.
+- **Expanded device options:** Added support for writable `SR_CONF_NUM_LOGIC_CHANNELS` and `SR_CONF_TEST_MODE` configuration keys, plus live trace updates when device settings change.
 
-### Packaging & Platform Support
-- **Linux ARM64 & Debian packaging:** Native ARM64 build support and `.deb` packaging workflows.
-- **Windows release automation:** Dedicated Windows `x86_64` CI build and GitHub Releases pipeline.
+### Cross-Platform Qt 6 Releases
+Automated GitHub Releases bundling **PulseView2** with the full sigrok stack (`libsigrok`, `libsigrokdecode`, protocol decoders, and `fx2lafw` firmware):
+- **Windows (`x86_64`):** Installer (`.exe`) and portable `.zip`
+- **macOS (`arm64` / Apple Silicon):** Self-contained `.dmg` app bundle
+- **Linux (Ubuntu 26.04 LTS `amd64`):** `.deb` package with `sigrok-cli` and udev rules
 
 ---
 
 ## Building from Source
 
-PulseView2 builds with CMake, Qt 5 (or Qt 6), Boost, `glibmm`, `libsigrokcxx`, and `libsigrokdecode` (targeting `libsigrok` / `libsigrokdecode` `master`):
+PulseView2 builds with CMake, Ninja, Qt 6 (or Qt 5), Boost, `glibmm`, `libsigrokcxx`, and `libsigrokdecode` (targeting `libsigrok` / `libsigrokdecode` `master`):
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTS=ON
@@ -51,7 +48,7 @@ ctest --test-dir build --output-on-failure
 
 ## Upstream Project & Credits
 
-PulseView2 is built directly on the work of the [sigrok](https://sigrok.org/wiki/PulseView) project and its contributors, incorporating fixes and enhancements from community contributors and forks (including Sipeed, Terstegge, PentHertz, yuzhe-TheFool, and upstream `sigrokproject/pulseview` pull requests).
+PulseView2 builds directly on the work of the [sigrok](https://sigrok.org/wiki/PulseView) project and incorporates fixes and enhancements from community contributors and forks (including Sipeed, Terstegge, PentHertz, yuzhe-TheFool, and upstream `sigrokproject/pulseview` pull requests).
 
 - **Upstream Website:** https://sigrok.org/wiki/PulseView
 - **Upstream Repository:** https://github.com/sigrokproject/pulseview
@@ -68,7 +65,5 @@ PulseView2 is licensed under the **GNU General Public License (GPL), version 3 o
 - **Tango Icon Library** (`icons/application-exit.png`, `document-new.png`, `document-open.png`, `document-save-as.png`, `edit-paste.svg`, `help-browser.png`, `media-playback-pause.png`, `media-playback-start.png`, `preferences-system.png`, `search.svg`, `window-new.png`, `zoom-fit-best.png`, `zoom-in.png`, `zoom-out.png`) — Public Domain
 - **Information icon** (`icons/information.svg`, Bobarino) — GFDL 1.2+ / CC-BY-SA 3.0
 - **Add Math Channel icon** (`icons/add-math-channel.svg`, Inductiveload) — Public Domain
-- **QDarkStyleSheet** (Colin Duquesnoy) — CC-BY 4.0
-- **DarkStyle** (Juergen Skrotzky) — MIT License
 - **QHexView** (Victor Anjin) — MIT License
 - **ExprTk** (Arash Partow) — MIT License
