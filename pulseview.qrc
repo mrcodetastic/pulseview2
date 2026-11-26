@@ -16,16 +16,12 @@
 	<file>icons/information.svg</file>
 	<file>icons/media-playback-pause.png</file>
 	<file>icons/media-playback-start.png</file>
-	<file>icons/menu.svg</file>
 	<file>icons/preferences-system.png</file>
 	<file>icons/settings-general.png</file>
 	<file>icons/settings-views.svg</file>
 	<file>icons/pulseview.png</file>
 	<file>icons/pulseview.svg</file>
 	<file>icons/search.svg</file>
-	<file>icons/status-green.svg</file>
-	<file>icons/status-grey.svg</file>
-	<file>icons/status-red.svg</file>
 	<file>icons/show-cursors.svg</file>
 	<file>icons/trigger-change.svg</file>
 	<file>icons/trigger-falling.svg</file>
@@ -45,6 +41,9 @@
 	<file>icons/zoom-fit-best.png</file>
 	<file>icons/zoom-in.png</file>
 	<file>icons/zoom-out.png</file>
+	<file>icons/ui/play.svg</file>
+	<file>icons/ui/reload.svg</file>
+	<file>icons/ui/stop.svg</file>
     </qresource>
 
     <qresource prefix="/">

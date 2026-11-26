@@ -1,0 +1,195 @@
+diff --git a/src/hardware/fx2lafw/protocol.c b/src/hardware/fx2lafw/protocol.c
+index 8854f5a..8538af4 100644
+--- a/src/hardware/fx2lafw/protocol.c
++++ b/src/hardware/fx2lafw/protocol.c
+@@ -672,6 +672,17 @@ static int start_transfers(const struct sr_dev_inst *sdi)
+ 
+ 	timeout = get_timeout(devc);
+ 	devc->num_transfers = num_transfers;
++
++#if defined(_WIN32) && defined(LIBUSB_API_VERSION) && (LIBUSB_API_VERSION >= 0x0100010C)
++	if (libusb_endpoint_supports_raw_io(usb->devhdl, 2 | LIBUSB_ENDPOINT_IN) == 1) {
++		int max_raw = libusb_get_max_raw_io_transfer_size(usb->devhdl, 2 | LIBUSB_ENDPOINT_IN);
++		if (max_raw > 0 && size <= (size_t)max_raw && (size % 512) == 0) {
++			if (libusb_endpoint_set_raw_io(usb->devhdl, 2 | LIBUSB_ENDPOINT_IN, 1) == LIBUSB_SUCCESS)
++				sr_dbg("Enabled WinUSB RAW_IO on bulk IN endpoint (transfer size %" G_GSIZE_FORMAT ").", size);
++		}
++	}
++#endif
++
+ 	for (i = 0; i < num_transfers; i++) {
+ 		if (!(buf = g_try_malloc(size))) {
+ 			sr_err("USB transfer buffer malloc failed.");
+@@ -733,7 +744,10 @@ SR_PRIV int fx2lafw_start_acquisition(const struct sr_dev_inst *sdi)
+ 	}
+ 
+ 	timeout = get_timeout(devc);
+-	usb_source_add(sdi->session, devc->ctx, timeout, receive_data, drvc);
++	if ((ret = usb_source_add(sdi->session, devc->ctx, timeout, receive_data, drvc)) != SR_OK) {
++		sr_err("Failed to add USB event source.");
++		return ret;
++	}
+ 
+ 	size = get_buffer_size(devc);
+ 	/* Prepare for analog sampling. */
+@@ -743,7 +757,11 @@ SR_PRIV int fx2lafw_start_acquisition(const struct sr_dev_inst *sdi)
+ 		devc->analog_buffer = g_try_malloc(
+ 			sizeof(float) * size / 2);
+ 	}
+-	start_transfers(sdi);
++	if ((ret = start_transfers(sdi)) != SR_OK) {
++		if (devc->submitted_transfers == 0)
++			usb_source_remove(sdi->session, devc->ctx);
++		return ret;
++	}
+ 	if ((ret = command_start_acquisition(sdi)) != SR_OK) {
+ 		fx2lafw_abort_acquisition(devc);
+ 		return ret;
+diff --git a/src/usb.c b/src/usb.c
+index feafe9d..130318e 100644
+--- a/src/usb.c
++++ b/src/usb.c
+@@ -50,6 +50,7 @@ struct usb_source {
+ 
+ 	struct libusb_context *usb_ctx;
+ 	GPtrArray *pollfds;
++	gboolean no_pollfds;
+ };
+ 
+ /** USB event source prepare() method.
+@@ -64,6 +65,11 @@ static gboolean usb_source_prepare(GSource *source, int *timeout)
+ 
+ 	usource = (struct usb_source *)source;
+ 
++	if (usource->no_pollfds) {
++		*timeout = 0;
++		return TRUE;
++	}
++
+ 	ret = libusb_get_next_timeout(usource->usb_ctx, &usb_timeout);
+ 	if (G_UNLIKELY(ret < 0)) {
+ 		sr_err("Failed to get libusb timeout: %s",
+@@ -101,6 +107,9 @@ static gboolean usb_source_check(GSource *source)
+ 	unsigned int i;
+ 
+ 	usource = (struct usb_source *)source;
++	if (usource->no_pollfds)
++		return TRUE;
++
+ 	revents = 0;
+ 
+ 	for (i = 0; i < usource->pollfds->len; i++) {
+@@ -124,6 +133,59 @@ static gboolean usb_source_dispatch(GSource *source,
+ 
+ 	usource = (struct usb_source *)source;
+ 	revents = 0;
++
++	if (usource->no_pollfds) {
++		struct timeval tv;
++		int64_t now_us = g_get_monotonic_time();
++		int64_t wait_us = 10000; /* Cap wait at 10 ms so Stop stays snappy */
++		gboolean timed_out = FALSE;
++
++		if (usource->due_us == 0 && usource->timeout_us >= 0)
++			usource->due_us = now_us + usource->timeout_us;
++
++		if (usource->due_us != INT64_MAX) {
++			int64_t rem_us = usource->due_us - now_us;
++			if (rem_us <= 0)
++				wait_us = 0;
++			else if (rem_us < wait_us)
++				wait_us = rem_us;
++		}
++
++		tv.tv_sec = (long)(wait_us / G_USEC_PER_SEC);
++		tv.tv_usec = (long)(wait_us % G_USEC_PER_SEC);
++
++		libusb_handle_events_timeout_completed(usource->usb_ctx, &tv, NULL);
++
++		/* Transfer callbacks may have removed/destroyed this source. */
++		if (g_source_is_destroyed(source))
++			return G_SOURCE_REMOVE;
++
++		now_us = g_get_monotonic_time();
++		if (usource->due_us != INT64_MAX && now_us >= usource->due_us) {
++			timed_out = TRUE;
++			revents = 0;
++		} else {
++			revents = G_IO_IN;
++		}
++
++		if (!callback) {
++			sr_err("Callback not set, cannot dispatch event.");
++			return G_SOURCE_REMOVE;
++		}
++		keep = (*SR_RECEIVE_DATA_CALLBACK(callback))(-1, revents, user_data);
++
++		if (G_LIKELY(keep) && G_LIKELY(!g_source_is_destroyed(source))) {
++			if (timed_out) {
++				if (usource->timeout_us >= 0)
++					usource->due_us = g_get_monotonic_time()
++							+ usource->timeout_us;
++				else
++					usource->due_us = INT64_MAX;
++			}
++		}
++		return keep;
++	}
++
+ 	/*
+ 	 * This is somewhat arbitrary, but drivers use revents to distinguish
+ 	 * actual I/O from timeouts. When we remove the user timeout from the
+@@ -160,7 +222,8 @@ static void usb_source_finalize(GSource *source)
+ 
+ 	sr_spew("%s", __func__);
+ 
+-	libusb_set_pollfd_notifiers(usource->usb_ctx, NULL, NULL, NULL);
++	if (!usource->no_pollfds)
++		libusb_set_pollfd_notifiers(usource->usb_ctx, NULL, NULL, NULL);
+ 
+ 	g_ptr_array_unref(usource->pollfds);
+ 	usource->pollfds = NULL;
+@@ -263,8 +326,12 @@ static GSource *usb_source_new(struct sr_session *session,
+ 
+ 	upollfds = libusb_get_pollfds(usb_ctx);
+ 	if (!upollfds) {
++#ifdef _WIN32
++		sr_dbg("libusb_get_pollfds() unavailable on Windows; using direct event polling.");
++#else
+ 		sr_err("Failed to get libusb file descriptors.");
+ 		return NULL;
++#endif
+ 	}
+ 	source = g_source_new(&usb_source_funcs, sizeof(struct usb_source));
+ 	usource = (struct usb_source *)source;
+@@ -281,17 +348,24 @@ static GSource *usb_source_new(struct sr_session *session,
+ 	usource->session = session;
+ 	usource->usb_ctx = usb_ctx;
+ 	usource->pollfds = g_ptr_array_new_full(8, &usb_source_free_pollfd);
++	usource->no_pollfds = (upollfds == NULL);
+ 
+-	for (upfd = upollfds; *upfd != NULL; upfd++)
+-		usb_pollfd_added((*upfd)->fd, (*upfd)->events, usource);
++	if (!usource->no_pollfds) {
++		for (upfd = upollfds; *upfd != NULL; upfd++)
++			usb_pollfd_added((*upfd)->fd, (*upfd)->events, usource);
+ 
+ #if (LIBUSB_API_VERSION >= 0x01000104)
+-	libusb_free_pollfds(upollfds);
++		libusb_free_pollfds(upollfds);
+ #else
+-	free(upollfds);
++		free(upollfds);
+ #endif
+-	libusb_set_pollfd_notifiers(usb_ctx,
+-		&usb_pollfd_added, &usb_pollfd_removed, usource);
++		libusb_set_pollfd_notifiers(usb_ctx,
++			&usb_pollfd_added, &usb_pollfd_removed, usource);
++	} else {
++		/* Lower priority than G_PRIORITY_DEFAULT so sr_session_stop()
++		 * (g_main_context_invoke) preempts USB polling immediately. */
++		g_source_set_priority(source, G_PRIORITY_DEFAULT_IDLE);
++	}
+ 
+ 	return source;
+ }

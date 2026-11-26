@@ -21,6 +21,7 @@
 #define PULSEVIEW_PV_DIALOGS_CONNECT_HPP
 
 #include <memory>
+#include <vector>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -31,10 +32,14 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+#include <pv/devicemanager.hpp>
+
 using std::shared_ptr;
+using std::vector;
 
 namespace sigrok {
 class Driver;
@@ -69,15 +74,24 @@ private:
 
 	void populate_serials(shared_ptr<sigrok::Driver> driver);
 
+	void populate_recent_devices();
+
+	void apply_recent_device(int index);
+
 	void unset_connection();
 
 private Q_SLOTS:
 	void driver_selected(int index);
 
+	void recent_device_selected(int index);
+	void recent_reconnect_clicked();
+
 	void serial_toggled(bool checked);
 	void tcp_toggled(bool checked);
 
 	void scan_pressed();
+
+	void on_accepted();
 
 private:
 	pv::DeviceManager &device_manager_;
@@ -87,7 +101,15 @@ private:
 	QWidget form_;
 	QFormLayout form_layout_;
 
+	vector<RecentDevice> recent_entries_;
+	QComboBox recent_devices_;
+	QPushButton recent_reconnect_button_;
+
 	QComboBox drivers_;
+
+	QRadioButton *radiobtn_usb_;
+	QRadioButton *radiobtn_serial_;
+	QRadioButton *radiobtn_tcp_;
 
 	QWidget *serial_config_;
 	QComboBox serial_devices_, serial_baudrate_;
@@ -99,6 +121,10 @@ private:
 
 	QPushButton scan_button_;
 	QListWidget device_list_;
+
+	QString last_scan_interface_;
+	QString last_scan_conn_;
+	QString last_scan_serialcomm_;
 
 	QDialogButtonBox button_box_;
 };

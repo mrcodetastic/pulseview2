@@ -115,8 +115,20 @@ public:
 		uint64_t start, uint64_t end,
 		float min_length, int sig_index, bool first_change_only = false);
 
+	/**
+	 * Gets the edges immediately before and after the given sample.
+	 * @param[out] dest The vector to place the two surrounding edges into.
+	 * @param[in] origin_sample The sample to search around.
+	 * @param[in] min_length The minimum number of samples that
+	 * can be resolved at this level of detail.
+	 * @param[in] sig_index The index of the signal.
+	 * @param[in] search_radius If non-zero, only searches within this many
+	 * samples around origin_sample. Keeps cursor dragging responsive on
+	 * large captures by avoiding a scan from sample 0 on every mouse move.
+	 */
 	void get_surrounding_edges(vector<EdgePair> &dest,
-		uint64_t origin_sample, float min_length, int sig_index);
+		uint64_t origin_sample, float min_length, int sig_index,
+		uint64_t search_radius = 0);
 
 private:
 	uint64_t unpack_sample(const uint8_t *ptr) const;

@@ -107,14 +107,8 @@ LogicSignal::LogicSignal(pv::Session &session, shared_ptr<data::SignalBase> base
 
 	update_logic_level_offsets();
 
-	/* Populate this channel's trigger setting with whatever we
-	 * find in the current session trigger, if anything. */
-	trigger_match_ = nullptr;
-	if (shared_ptr<Trigger> trigger = session_.session()->trigger())
-		for (auto stage : trigger->stages())
-			for (auto match : stage->matches())
-				if (match->channel() == base_->channel())
-					trigger_match_ = match->type();
+	connect(&session_, SIGNAL(trigger_changed()), this, SLOT(on_session_trigger_changed()));
+	on_session_trigger_changed();
 }
 
 std::map<QString, QVariant> LogicSignal::save_settings() const
@@ -178,13 +172,19 @@ void LogicSignal::paint_mid(QPainter &p, ViewItemPaintParams &pp)
 	if (samplerate == 0.0)
 		samplerate = 1.0;
 
-	const double pixels_offset = pp.pixels_offset();
+	const View& view = *owner_->view();
 	const pv::util::Timestamp& start_time = segment->start_time();
 	const int64_t last_sample = (int64_t)segment->get_sample_count() - 1;
 	const double samples_per_pixel = samplerate * pp.scale();
 	const double pixels_per_sample = 1 / samples_per_pixel;
-	const pv::util::Timestamp start = samplerate * (pp.offset() - start_time);
-	const pv::util::Timestamp end = start + samples_per_pixel * pp.width();
+	const pv::util::Timestamp start = samplerate * (view.pixel_to_time(pp.left()) - start_time);
+	const pv::util::Timestamp end = samplerate * (view.pixel_to_time(pp.right()) - start_time);
+	const bool compressed = !view.idle_time_map().empty();
+	const double linear_offset = ((pp.offset() - start_time) / pp.scale()).convert_to<double>();
+	const auto sample_x = [&](int64_t sample) {
+		return compressed ? view.time_to_pixel(start_time + pv::util::Timestamp(sample) / samplerate) :
+			pp.left() + sample / samples_per_pixel - linear_offset;
+	};
 
 	const int64_t start_sample = min(max(floor(start).convert_to<int64_t>(),
 		(int64_t)0), last_sample);
@@ -196,12 +196,12 @@ void LogicSignal::paint_mid(QPainter &p, ViewItemPaintParams &pp)
 	assert(edges.size() >= 2);
 
 	const float first_sample_x =
-		pp.left() + (edges.front().first / samples_per_pixel - pixels_offset);
+		sample_x(edges.front().first);
 	const float last_sample_x =
-		pp.left() + (edges.back().first / samples_per_pixel - pixels_offset);
+		sample_x(edges.back().first);
 
 	// Check whether we need to paint the sampling points
-	const bool show_sampling_points = show_sampling_points_ && (samples_per_pixel < 0.25);
+	const bool show_sampling_points = show_sampling_points_ && view.idle_time_map().empty() && (samples_per_pixel < 0.25);
 	vector<QRectF> sampling_points;
 	float sampling_point_x = first_sample_x;
 	int64_t sampling_point_sample = start_sample;
@@ -231,7 +231,7 @@ void LogicSignal::paint_mid(QPainter &p, ViewItemPaintParams &pp)
 		// after a rising edge corresponds to said rising edge - and vice versa. If
 		// more edges with the same logic level follow, they denote multiple edges.
 
-		const float x = pp.left() + ((*i).first / samples_per_pixel - pixels_offset);
+		const float x = sample_x((*i).first);
 		*line++ = QLineF(x, high_offset, x, low_offset);
 
 		if (fill_high_areas_) {
@@ -291,11 +291,9 @@ void LogicSignal::paint_mid(QPainter &p, ViewItemPaintParams &pp)
 	QLineF *const cap_lines = new QLineF[max_cap_line_count];
 
 	p.setPen(HighColor);
-	paint_caps(p, cap_lines, edges, true, samples_per_pixel,
-		pixels_offset, pp.left(), high_offset);
+	paint_caps(p, cap_lines, edges, true, sample_x, high_offset);
 	p.setPen(LowColor);
-	paint_caps(p, cap_lines, edges, false, samples_per_pixel,
-		pixels_offset, pp.left(), low_offset);
+	paint_caps(p, cap_lines, edges, false, sample_x, low_offset);
 
 	delete[] cap_lines;
 
@@ -365,8 +363,13 @@ vector<LogicSegment::EdgePair> LogicSignal::get_nearest_level_changes(uint64_t s
 
 	vector<LogicSegment::EdgePair> edges;
 
+	// Limit the edge search to the snap distance around the cursor
+	// to keep cursor dragging responsive on large captures.
+	const uint64_t search_radius = (uint64_t)max(
+		1.0, view->snap_distance() * samples_per_pixel);
+
 	segment->get_surrounding_edges(edges, sample_pos,
-		samples_per_pixel / Oversampling, base_->index());
+		samples_per_pixel / Oversampling, base_->index(), search_radius);
 
 	if (edges.empty())
 		return vector<LogicSegment::EdgePair>();
@@ -376,18 +379,15 @@ vector<LogicSegment::EdgePair> LogicSignal::get_nearest_level_changes(uint64_t s
 
 void LogicSignal::paint_caps(QPainter &p, QLineF *const lines,
 	vector< pair<int64_t, bool> > &edges, bool level,
-	double samples_per_pixel, double pixels_offset, float x_offset,
-	float y_offset)
+	const std::function<double(int64_t)>& sample_x, float y_offset)
 {
 	QLineF *line = lines;
 
 	for (auto i = edges.begin(); i != (edges.end() - 1); i++)
 		if ((*i).second == level) {
 			*line++ = QLineF(
-				((*i).first / samples_per_pixel -
-					pixels_offset) + x_offset, y_offset,
-				((*(i+1)).first / samples_per_pixel -
-					pixels_offset) + x_offset, y_offset);
+				sample_x((*i).first), y_offset,
+				sample_x((*(i+1)).first), y_offset);
 		}
 
 	p.drawLines(lines, line - lines);
@@ -396,9 +396,14 @@ void LogicSignal::paint_caps(QPainter &p, QLineF *const lines,
 shared_ptr<pv::data::LogicSegment> LogicSignal::get_logic_segment_to_paint() const
 {
 	shared_ptr<pv::data::LogicSegment> segment;
+	// AnalogSignal also derives from LogicSignal; without conversion it has
+	// no logic data. Callers such as edge snapping must get an empty segment.
+	const auto logic = base_->logic_data();
+	if (!logic)
+		return nullptr;
 
 	const deque< shared_ptr<pv::data::LogicSegment> > &segments =
-		base_->logic_data()->logic_segments();
+		logic->logic_segments();
 
 	if (!segments.empty()) {
 		if (segment_display_mode_ == ShowLastSegmentOnly)
@@ -555,19 +560,21 @@ void LogicSignal::populate_popup_form(QWidget *parent, QFormLayout *form)
 			action->setChecked(trigger_match_ == type);
 		}
 
-		// Only allow triggers to be changed when we're stopped
-		if (session_.get_capture_state() != Session::Stopped)
-			for (QAction* action : trigger_bar_->findChildren<QAction*>())  // clazy:exclude=range-loop
-				action->setEnabled(false);
-
 		form->addRow(tr("Trigger"), trigger_bar_);
+		trigger_sequence_hint_ = new QLabel(tr("Use the Trigger button in the toolbar to edit this sequence."), parent);
+		trigger_sequence_hint_->setWordWrap(true);
+		form->addRow(trigger_sequence_hint_);
+		on_session_trigger_changed();
 	}
 }
 
 void LogicSignal::modify_trigger()
 {
 	auto trigger = session_.session()->trigger();
-	auto new_trigger = session_.device_manager().context()->create_trigger("pulseview");
+	if ((trigger && trigger->stages().size() > 1) || session_.has_extended_trigger())
+		return;
+	auto new_trigger = session_.device_manager().context()->create_trigger(
+		trigger ? trigger->name() : "pulseview");
 
 	if (trigger) {
 		for (auto stage : trigger->stages()) {
@@ -581,7 +588,7 @@ void LogicSignal::modify_trigger()
 			for (auto match : stage->matches()) {
 				if (match->channel() == base_->channel())
 					continue;
-				new_stage->add_match(match->channel(), match->type());
+				new_stage->add_match(match->channel(), match->type(), match->value());
 			}
 		}
 	}
@@ -597,7 +604,7 @@ void LogicSignal::modify_trigger()
 			trigger_match_);
 	}
 
-	session_.session()->set_trigger(
+	session_.set_trigger(
 		new_trigger->stages().empty() ? nullptr : new_trigger);
 
 	if (owner_)
@@ -644,8 +651,43 @@ void LogicSignal::on_setting_changed(const QString &key, const QVariant &value)
 		high_fill_color_ = QColor::fromRgba(value.value<uint32_t>());
 }
 
+void LogicSignal::on_session_trigger_changed()
+{
+	trigger_match_ = nullptr;
+	const auto trigger = session_.session() ? session_.session()->trigger() : nullptr;
+	const bool sequence = (trigger && trigger->stages().size() > 1) || session_.has_extended_trigger();
+	if (trigger && !sequence)
+		for (const auto &stage : trigger->stages())
+			for (const auto &match : stage->matches())
+				if (match->channel() == base_->channel())
+					trigger_match_ = match->type();
+	if (trigger_sequence_hint_)
+		trigger_sequence_hint_->setVisible(sequence);
+	if (trigger_bar_)
+		trigger_bar_->setEnabled(!sequence && session_.get_capture_state() == Session::Stopped &&
+			!session_.device_needs_reconnect());
+	if (trigger_none_) {
+		const auto selected = action_from_trigger_type(trigger_match_);
+		for (auto action : {trigger_none_, trigger_low_, trigger_high_,
+				trigger_rising_, trigger_falling_, trigger_change_})
+			if (action) action->setChecked(action == selected);
+	}
+	if (owner_)
+		owner_->row_item_appearance_changed(false, true);
+}
+
 void LogicSignal::on_trigger()
 {
+	if (session_.has_extended_trigger()) {
+		on_session_trigger_changed();
+		return;
+	}
+	if (session_.session())
+		if (auto trigger = session_.session()->trigger())
+			if (trigger->stages().size() > 1) {
+				on_session_trigger_changed();
+				return;
+			}
 	QAction *action;
 
 	action_from_trigger_type(trigger_match_)->setChecked(false);

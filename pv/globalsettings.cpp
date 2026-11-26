@@ -29,6 +29,7 @@
 #include <QPixmapCache>
 #include <QString>
 #include <QStyle>
+#include <QStyleFactory>
 #include <QtGlobal>
 
 #include "globalsettings.hpp"
@@ -112,11 +113,12 @@ void GlobalSettings::set_defaults_where_needed()
 		apply_language();
 	}
 
-	// Use no theme by default
+	// Use no theme and Fusion widget style by default
 	if (!contains(Key_General_Theme))
 		setValue(Key_General_Theme, 0);
 	if (!contains(Key_General_Style))
-		setValue(Key_General_Style, "");
+		setValue(Key_General_Style,
+			QStyleFactory::keys().contains("Fusion", Qt::CaseInsensitive) ? "Fusion" : "");
 
 	// Save setup with .sr files by default
 	if (!contains(Key_General_SaveWithSetup))
@@ -221,10 +223,14 @@ void GlobalSettings::apply_theme()
 	qApp->setPalette(default_palette_);
 
 	const QString style = value(Key_General_Style).toString();
-	if (style.isEmpty())
-		qApp->setStyle(default_style_);
-	else
+	if (style.isEmpty()) {
+		if (QStyleFactory::keys().contains("Fusion", Qt::CaseInsensitive))
+			qApp->setStyle("Fusion");
+		else
+			qApp->setStyle(default_style_);
+	} else {
 		qApp->setStyle(style);
+	}
 
 	is_dark_theme_ = false;
 

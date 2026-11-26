@@ -27,6 +27,8 @@
 #include <string>
 #include <vector>
 
+#include <QString>
+
 using std::list;
 using std::map;
 using std::set;
@@ -55,9 +57,28 @@ class HardwareDevice;
 
 class Session;
 
+struct RecentDevice
+{
+	QString display_name;
+	QString driver_name;
+	QString vendor;
+	QString model;
+	QString serial_number;
+	QString interface_type; // "usb", "serial", "tcp"
+	QString conn;
+	QString serialcomm;
+
+	bool is_valid() const
+	{
+		return !driver_name.isEmpty() && driver_name != "demo";
+	}
+};
+
 class DeviceManager
 {
 public:
+	static constexpr int MaxRecentDevices = 5;
+
 	DeviceManager(shared_ptr<sigrok::Context> context,
 		std::string driver, bool do_scan);
 
@@ -81,6 +102,25 @@ public:
 
 	const shared_ptr<devices::HardwareDevice> find_device_from_info(
 		const map<string, string> search_info);
+
+	RecentDevice make_recent_device(
+		const shared_ptr<devices::HardwareDevice> &device,
+		const QString &interface_type = QString(),
+		const QString &conn = QString(),
+		const QString &serialcomm = QString()) const;
+
+	vector<RecentDevice> recent_devices() const;
+
+	void record_recent_device(const RecentDevice &entry);
+
+	void record_recent_device(
+		const shared_ptr<devices::HardwareDevice> &device,
+		const QString &interface_type = QString(),
+		const QString &conn = QString(),
+		const QString &serialcomm = QString());
+
+	shared_ptr<devices::HardwareDevice> reconnect_device(
+		const RecentDevice &target);
 
 private:
 	bool compare_devices(shared_ptr<devices::Device> a,

@@ -47,14 +47,15 @@ option(ENABLE_STACKTRACE "Enable stack trace when crashing" FALSE)
 option(ENABLE_DECODE "Build with libsigrokdecode" TRUE)
 option(ENABLE_FLOW "Build with libsigrokflow" FALSE)
 option(ENABLE_TESTS "Enable unit tests" FALSE)
-option(STATIC_PKGDEPS_LIBS "Statically link to (pkg-config) libraries" FALSE)
+if(WIN32)
+	set(PKGDEPS_STATIC_DEFAULT TRUE)
+else()
+	set(PKGDEPS_STATIC_DEFAULT FALSE)
+endif()
+option(STATIC_PKGDEPS_LIBS "Statically link to (pkg-config) libraries" ${PKGDEPS_STATIC_DEFAULT})
 option(ENABLE_TS_UPDATE "Update .ts source files (Qt l10n)" FALSE)
 
 if(WIN32)
-	# On Windows/MinGW we need to statically link to libraries.
-	# This option is user configurable, but enable it by default on win32.
-	set(STATIC_PKGDEPS_LIBS TRUE)
-
 	# Windows does not support UNIX signals.
 	set(ENABLE_SIGNALS FALSE)
 endif()
@@ -64,12 +65,6 @@ if(NOT CMAKE_BUILD_TYPE)
 	"Choose the type of build (None, Debug, Release, RelWithDebInfo, MinSizeRel)."
 	FORCE)
 endif()
-
-#===============================================================================
-#= Documentation
-#-------------------------------------------------------------------------------
-
-add_subdirectory(manual)
 
 #===============================================================================
 #= Dependencies
@@ -118,7 +113,7 @@ else()
 	endif()
 endif()
 
-list(APPEND PKGDEPS glib-2.0>=2.28.0)
+list(APPEND PKGDEPS glib-2.0>=2.28.0 libzip>=0.11)
 
 # Try to find the prefered glibmm-2.4. If not found then add glibmm-2.68
 # to the dependency list.
@@ -139,10 +134,6 @@ list(APPEND PKGDEPS "${LIBSR_CXX_BINDING}")
 
 if(ENABLE_DECODE)
 	list(APPEND PKGDEPS libsigrokdecode>=0.5.2)
-endif()
-
-if(ANDROID)
-	list(APPEND PKGDEPS libsigrokandroidutils>=0.1.0)
 endif()
 
 pkg_check_modules(LIBSRCXX ${LIBSR_CXX_BINDING})
@@ -273,6 +264,45 @@ if(ENABLE_DECODE)
 	cmake_pop_check_state()
 endif()
 
+cmake_push_check_state()
+set(CMAKE_REQUIRED_INCLUDES "${PKGDEPS_INCLUDE_DIRS}")
+set(CMAKE_REQUIRED_LIBRARIES "${PKGDEPS_LIBRARIES}")
+foreach (LPATH ${PKGDEPS_LIBRARY_DIRS})
+	list(APPEND CMAKE_REQUIRED_LINK_OPTIONS "-L${LPATH}")
+endforeach ()
+check_cxx_source_compiles("
+#include <libsigrokcxx/libsigrokcxx.hpp>
+int main()
+{
+	auto k = sigrok::ConfigKey::CAPTURE_STATUS;
+	return k ? SR_CONF_CAPTURE_STATUS : 0;
+}
+" HAVE_SR_CONF_CAPTURE_STATUS)
+check_cxx_source_compiles("
+#include <libsigrokcxx/libsigrokcxx.hpp>
+int main()
+{
+	auto k = sigrok::ConfigKey::CAPTURE_ERROR;
+	return k ? SR_CONF_CAPTURE_ERROR : 0;
+}
+" HAVE_SR_CONF_CAPTURE_ERROR)
+check_cxx_source_compiles("
+#include <libsigrokcxx/libsigrokcxx.hpp>
+int main()
+{
+	auto k = sigrok::ConfigKey::TRIGGER_OPTIONS;
+	return k ? 1 : 0;
+}
+" HAVE_SR_CONF_TRIGGER_OPTIONS)
+check_cxx_source_compiles("
+#include <libsigrokcxx/libsigrokcxx.hpp>
+int main()
+{
+	return SR_CONF_DUTY_CYCLE;
+}
+" HAVE_SR_CONF_DUTY_CYCLE)
+cmake_pop_check_state()
+
 #===============================================================================
 #= System Introspection
 #-------------------------------------------------------------------------------
@@ -336,8 +366,12 @@ set(pulseview_SOURCES
 	pv/logging.cpp
 	pv/mainwindow.cpp
 	pv/metadata_obj.cpp
+	pv/capturecollection.cpp
 	pv/session.cpp
+	pv/triggersettings.cpp
+	pv/triggersequence.cpp
 	pv/storesession.cpp
+	pv/iconhelper.cpp
 	pv/util.cpp
 	pv/binding/binding.cpp
 	pv/binding/inputoutput.cpp
@@ -359,6 +393,7 @@ set(pulseview_SOURCES
 	pv/dialogs/inputoutputoptions.cpp
 	pv/dialogs/settings.cpp
 	pv/dialogs/storeprogress.cpp
+	pv/dialogs/triggereditor.cpp
 	pv/popups/deviceoptions.cpp
 	pv/popups/channels.cpp
 	pv/prop/bool.cpp
@@ -428,6 +463,7 @@ set(pulseview_HEADERS
 	pv/dialogs/inputoutputoptions.hpp
 	pv/dialogs/settings.hpp
 	pv/dialogs/storeprogress.hpp
+	pv/dialogs/triggereditor.hpp
 	pv/popups/channels.hpp
 	pv/popups/deviceoptions.hpp
 	pv/prop/bool.hpp
@@ -515,16 +551,9 @@ endif()
 
 if(WIN32)
 	# Use the sigrok icon for the pulseview.exe executable.
-	set(CMAKE_RC_COMPILE_OBJECT "${CMAKE_RC_COMPILER} -O coff -I${CMAKE_CURRENT_SOURCE_DIR} <SOURCE> <OBJECT>")
+	set(CMAKE_RC_COMPILE_OBJECT "\"${CMAKE_RC_COMPILER}\" -O coff -I\"${CMAKE_CURRENT_SOURCE_DIR}\" <SOURCE> <OBJECT>")
 	enable_language(RC)
 	list(APPEND pulseview_SOURCES pulseviewico.rc)
-endif()
-
-if(ANDROID)
-	list(APPEND pulseview_SOURCES
-		android/assetreader.cpp
-		android/loghandler.cpp
-	)
 endif()
 
 if(Qt5_FOUND)
@@ -631,7 +660,12 @@ else()
 	list(APPEND PULSEVIEW_LINK_LIBS ${PKGDEPS_LIBRARIES})
 endif()
 
-if(WIN32)
+if(Qt5_FOUND)
+	get_target_property(QT_CORE_LIBRARY_TYPE Qt5::Core TYPE)
+else()
+	get_target_property(QT_CORE_LIBRARY_TYPE Qt6::Core TYPE)
+endif()
+if(WIN32 AND QT_CORE_LIBRARY_TYPE STREQUAL "STATIC_LIBRARY")
 	# On Windows we need to statically link the libqsvg imageformat
 	# plugin (and the QtSvg component) for SVG graphics/icons to work.
 	# We also need QWindowsIntegrationPlugin, Qt5PlatformSupport (only for
@@ -656,16 +690,8 @@ if(ENABLE_STACKTRACE)
 	link_libraries("-no-pie -fno-pie")
 endif()
 
-if(ANDROID)
-	list(APPEND PULSEVIEW_LINK_LIBS "-llog")
-endif()
-
 set(INPUT_FILES_LIST ${pulseview_SOURCES} ${pulseview_RESOURCES_RCC} ${QM_FILES})
-if(ANDROID)
-	add_library(${PROJECT_NAME} SHARED ${INPUT_FILES_LIST})
-else()
-	add_executable(${PROJECT_NAME} ${INPUT_FILES_LIST})
-endif()
+add_executable(${PROJECT_NAME} ${INPUT_FILES_LIST})
 
 target_link_libraries(${PROJECT_NAME} ${PULSEVIEW_LINK_LIBS})
 
@@ -681,9 +707,6 @@ endif()
 # Install the executable.
 install(TARGETS ${PROJECT_NAME} DESTINATION bin/)
 
-# Install the manpage.
-install(FILES doc/pulseview.1 DESTINATION ${CMAKE_INSTALL_MANDIR}/man1 COMPONENT doc)
-
 # Install the desktop file.
 install(FILES contrib/org.sigrok.PulseView.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
 
@@ -694,9 +717,6 @@ install(FILES contrib/org.sigrok.PulseView.appdata.xml DESTINATION ${CMAKE_INSTA
 install(FILES icons/pulseview.png DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/48x48/apps)
 install(FILES icons/pulseview.svg DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps)
 
-# Generate Windows installer script.
-configure_file(contrib/pulseview_cross.nsi.in ${CMAKE_CURRENT_BINARY_DIR}/contrib/pulseview_cross.nsi @ONLY)
-
 #===============================================================================
 #= Packaging (handled by CPack)
 #-------------------------------------------------------------------------------
@@ -704,7 +724,7 @@ configure_file(contrib/pulseview_cross.nsi.in ${CMAKE_CURRENT_BINARY_DIR}/contri
 set(CPACK_PACKAGE_VERSION_MAJOR ${PV_VERSION_MAJOR})
 set(CPACK_PACKAGE_VERSION_MINOR ${PV_VERSION_MINOR})
 set(CPACK_PACKAGE_VERSION_PATCH ${PV_VERSION_MICRO})
-set(CPACK_PACKAGE_DESCRIPTION_FILE ${CMAKE_CURRENT_SOURCE_DIR}/README)
+set(CPACK_PACKAGE_DESCRIPTION_FILE ${CMAKE_CURRENT_SOURCE_DIR}/README.md)
 set(CPACK_RESOURCE_FILE_LICENSE ${CMAKE_CURRENT_SOURCE_DIR}/COPYING)
 set(CPACK_SOURCE_IGNORE_FILES ${CMAKE_CURRENT_BINARY_DIR} ".gitignore" ".git")
 set(CPACK_SOURCE_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}-${PV_VERSION_STRING}")
@@ -720,4 +740,13 @@ if(ENABLE_TESTS)
 	add_subdirectory(test)
 	enable_testing()
 	add_test(test ${CMAKE_CURRENT_BINARY_DIR}/test/pulseview-test)
+
+	# Isolate the allocation overrides from the application and Boost tests.
+	add_executable(segment-allocation-test
+		test/segment_allocation.cpp
+		pv/data/segment.cpp
+		pv/data/segment.hpp
+	)
+	target_link_libraries(segment-allocation-test ${QT_LIBRARIES})
+	add_test(segment-allocation segment-allocation-test)
 endif()

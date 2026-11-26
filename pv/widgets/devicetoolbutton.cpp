@@ -46,14 +46,35 @@ DeviceToolButton::DeviceToolButton(QWidget *parent,
 	QToolButton(parent),
 	device_manager_(device_manager),
 	connect_action_(connect_action),
+	reconnect_action_(nullptr),
 	menu_(this),
 	mapper_(this),
 	devices_()
 {
+	setObjectName(QString::fromUtf8("deviceSelectorButton"));
 	setPopupMode(QToolButton::MenuButtonPopup);
+	setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 	setMenu(&menu_);
 	setDefaultAction(connect_action_);
 	setMinimumWidth(QFontMetrics(font()).averageCharWidth() * 24);
+	setStyleSheet(
+		"QToolButton#deviceSelectorButton {"
+		"  border: 1px solid palette(mid);"
+		"  border-radius: 3px;"
+		"  background-color: palette(button);"
+		"  padding: 2px 22px 2px 8px;"
+		"}"
+		"QToolButton#deviceSelectorButton:hover {"
+		"  border-color: palette(highlight);"
+		"}"
+		"QToolButton#deviceSelectorButton::menu-button {"
+		"  subcontrol-origin: border;"
+		"  subcontrol-position: top right;"
+		"  width: 18px;"
+		"  border-left: 1px solid palette(mid);"
+		"  border-top-right-radius: 3px;"
+		"  border-bottom-right-radius: 3px;"
+		"}");
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 	connect(&mapper_, SIGNAL(mappedObject(QObject*)),
@@ -77,15 +98,21 @@ void DeviceToolButton::set_device_list(
 {
 	selected_device_ = selected;
 	setText(selected ? QString::fromStdString(
-		selected->display_name(device_manager_)) : tr("<No Device>"));
+		selected->display_name(device_manager_)) : tr("No Device"));
 	devices_ = vector< weak_ptr<Device> >(devices.begin(), devices.end());
 	update_device_list();
 }
 
 void DeviceToolButton::reset()
 {
-	setText(tr("<No Device>"));
+	setText(tr("No Device"));
 	selected_device_.reset();
+	update_device_list();
+}
+
+void DeviceToolButton::set_reconnect_action(QAction *action)
+{
+	reconnect_action_ = action;
 	update_device_list();
 }
 
@@ -94,6 +121,8 @@ void DeviceToolButton::update_device_list()
 	menu_.clear();
 	menu_.addAction(connect_action_);
 	menu_.setDefaultAction(connect_action_);
+	if (reconnect_action_ && reconnect_action_->isVisible())
+		menu_.addAction(reconnect_action_);
 	menu_.addSeparator();
 
 	for (weak_ptr<Device>& dev_weak_ptr : devices_) {

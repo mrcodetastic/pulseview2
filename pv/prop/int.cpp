@@ -22,10 +22,12 @@
 
 #include <QDebug>
 #include <QSpinBox>
+#include <QSignalBlocker>
 
 #include <libsigrokcxx/libsigrokcxx.hpp>
 
 #include "int.hpp"
+#include "configerror.hpp"
 
 using boost::optional;
 using std::max;
@@ -37,11 +39,12 @@ namespace prop {
 
 Int::Int(QString name, QString desc, QString suffix,
 	optional< pair<int64_t, int64_t> > range, Getter getter, Setter setter,
-	QString special_value_text) :
+	QString special_value_text, RangeGetter range_getter) :
 	Property(name, desc, getter, setter),
 	suffix_(suffix),
 	special_value_text_(special_value_text),
 	range_(range),
+	range_getter_(range_getter),
 	spin_box_(nullptr)
 {
 }
@@ -61,7 +64,12 @@ QWidget* Int::get_widget(QWidget *parent, bool auto_commit)
 		value_ = getter_();
 	} catch (const sigrok::Error &e) {
 		qWarning() << tr("Querying config key %1 resulted in %2").arg(name_, e.what());
-		return nullptr;
+		if (e.result != SR_ERR_NA || !range_)
+			return nullptr;
+		// A mode-dependent setting can become available without reopening
+		// the form. Keep a disabled placeholder when its UI range is known.
+		// Its type/value are replaced by a successful read before any commit.
+		value_ = Glib::Variant<int64_t>::create(range_->first);
 	}
 
 	GVariant *value = value_.gobj();
@@ -121,13 +129,22 @@ void Int::update_widget()
 	if (!spin_box_)
 		return;
 
+	auto range = range_;
 	try {
 		value_ = getter_();
+		if (range_getter_)
+			range = range_getter_();
 	} catch (const sigrok::Error &e) {
 		qWarning() << tr("Querying config key %1 resulted in %2").arg(name_, e.what());
+		spin_box_->setEnabled(false);
+		spin_box_->setSpecialValueText(tr("Unavailable"));
+		const QSignalBlocker blocker(spin_box_);
+		spin_box_->setValue(spin_box_->minimum());
 		return;
 	}
 
+	spin_box_->setEnabled(true);
+	spin_box_->setSpecialValueText(special_value_text_);
 	GVariant *value = value_.gobj();
 	assert(value);
 
@@ -155,6 +172,10 @@ void Int::update_widget()
 		assert(false);
 	}
 
+	// Readback must not recursively commit a value to the driver.
+	const QSignalBlocker blocker(spin_box_);
+	if (range)
+		spin_box_->setRange((int)range->first, (int)range->second);
 	spin_box_->setValue((int)int_val);
 }
 
@@ -162,7 +183,7 @@ void Int::commit()
 {
 	assert(setter_);
 
-	if (!spin_box_)
+	if (!spin_box_ || !spin_box_->isEnabled())
 		return;
 
 	GVariant *new_value = nullptr;
@@ -192,7 +213,13 @@ void Int::commit()
 
 	value_ = Glib::VariantBase(new_value);
 
-	setter_(value_);
+	try {
+		setter_(value_);
+	} catch (const sigrok::Error &e) {
+		update_widget();
+		if (e.result == SR_ERR_DEV_CLOSED) spin_box_->setEnabled(false);
+		show_config_error(spin_box_, e);
+	}
 }
 
 void Int::on_value_changed(int)

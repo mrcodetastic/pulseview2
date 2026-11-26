@@ -85,9 +85,11 @@ public:
 
 Settings::Settings(DeviceManager &device_manager, QWidget *parent) :
 	QDialog(parent),
-	device_manager_(device_manager)
+	device_manager_(device_manager),
+	about_page_index_(0)
 {
-	resize(600, 400);
+	setWindowTitle(tr("Preferences"));
+	resize(640, 440);
 
 	// Create log view
 	log_view_ = create_log_view();
@@ -124,6 +126,11 @@ Settings::Settings(DeviceManager &device_manager, QWidget *parent) :
 	settings.start_tracking();
 }
 
+void Settings::select_about_page()
+{
+	page_list->setCurrentRow(about_page_index_);
+}
+
 void Settings::create_pages()
 {
 	// General page
@@ -156,6 +163,7 @@ void Settings::create_pages()
 #endif
 
 	// About page
+	about_page_index_ = pages->count();
 	pages->addWidget(get_about_page(pages));
 
 	QListWidgetItem *aboutButton = new QListWidgetItem(page_list);
@@ -257,7 +265,7 @@ QWidget *Settings::get_general_settings_form(QWidget *parent) const
 
 	// Style combobox
 	QComboBox *style_cb = new QComboBox();
-	style_cb->addItem(tr("System Default"), "");
+	style_cb->addItem(tr("Default (Fusion)"), "");
 	for (QString& s : QStyleFactory::keys())
 		style_cb->addItem(s, s);
 
@@ -265,8 +273,10 @@ QWidget *Settings::get_general_settings_form(QWidget *parent) const
 		settings.value(GlobalSettings::Key_General_Style).toString();
 	if (current_style.isEmpty())
 		style_cb->setCurrentIndex(0);
-	else
-		style_cb->setCurrentIndex(style_cb->findText(current_style));
+	else {
+		const int idx = style_cb->findText(current_style, Qt::MatchFixedString);
+		style_cb->setCurrentIndex(idx >= 0 ? idx : 0);
+	}
 
 	connect(style_cb, SIGNAL(currentIndexChanged(int)),
 		this, SLOT(on_general_style_changed(int)));

@@ -98,6 +98,8 @@ const int AnalogSignal::InfoTextMarginBottom = 5;
 
 AnalogSignal::AnalogSignal(pv::Session &session, shared_ptr<data::SignalBase> base) :
 	LogicSignal(session, base),
+	signal_min_(0),
+	signal_max_(0),
 	value_at_hover_pos_(std::numeric_limits<float>::quiet_NaN()),
 	scale_index_(4), // 20 per div
 	pos_vdivs_(1),
@@ -652,8 +654,13 @@ vector<data::LogicSegment::EdgePair> AnalogSignal::get_nearest_level_changes(uin
 
 	vector<LogicSegment::EdgePair> edges;
 
+	// Limit the edge search to the snap distance around the cursor
+	// to keep cursor dragging responsive on large captures.
+	const uint64_t search_radius = (uint64_t)max(
+		1.0, view->snap_distance() * samples_per_pixel);
+
 	segment->get_surrounding_edges(edges, sample_pos,
-		samples_per_pixel / LogicSignal::Oversampling, 0);
+		samples_per_pixel / LogicSignal::Oversampling, 0, search_radius);
 
 	if (edges.empty())
 		return vector<LogicSegment::EdgePair>();
@@ -939,6 +946,12 @@ void AnalogSignal::on_setting_changed(const QString &key, const QVariant &value)
 		if (owner_)
 			owner_->row_item_appearance_changed(false, true);
 	}
+}
+
+void AnalogSignal::on_samples_cleared()
+{
+	signal_min_ = 0;
+	signal_max_ = 0;
 }
 
 void AnalogSignal::on_min_max_changed(float min, float max)

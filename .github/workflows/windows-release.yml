@@ -1,0 +1,284 @@
+name: Windows Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag name (e.g. v0.5.0-pv2.1)'
+        required: true
+        default: 'v0.5.0-pv2.1'
+      prerelease:
+        description: 'Mark GitHub Release as pre-release'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build PulseView2 Windows (UCRT64 x86_64 Release)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Checkout PulseView2
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup MSYS2 (UCRT64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            autoconf
+            autoconf-archive
+            automake
+            libtool
+            make
+            zip
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-doxygen
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-svg
+            mingw-w64-ucrt-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-boost
+            mingw-w64-ucrt-x86_64-glibmm
+            mingw-w64-ucrt-x86_64-libzip
+            mingw-w64-ucrt-x86_64-libserialport
+            mingw-w64-ucrt-x86_64-libusb
+            mingw-w64-ucrt-x86_64-libftdi
+            mingw-w64-ucrt-x86_64-hidapi
+            mingw-w64-ucrt-x86_64-nettle
+            mingw-w64-ucrt-x86_64-sdcc
+            mingw-w64-ucrt-x86_64-nsis
+
+      - name: Determine artifact version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "ARTIFACT_VERSION=${{ github.ref_name }}" >> "$GITHUB_ENV"
+          else
+            echo "ARTIFACT_VERSION=${{ inputs.release_tag }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build libsigrok (C + C++ bindings)
+        run: |
+          set -e
+          REPO_DIR="$PWD"
+          mkdir -p /tmp/sr-build
+          git clone --depth=1 https://github.com/sigrokproject/libsigrok.git /tmp/sr-build/libsigrok
+          cd /tmp/sr-build/libsigrok
+          tr -d '\r' < "$REPO_DIR/patches/libsigrok-windows-usb.patch" | git apply --whitespace=nowarn -
+          ./autogen.sh
+          ./configure \
+            --prefix="$MINGW_PREFIX" \
+            --enable-cxx \
+            --disable-python \
+            --disable-java \
+            --disable-ruby
+          make -j"$(nproc)"
+          make install
+
+      - name: Build libsigrokdecode (with protocol decoders)
+        run: |
+          set -e
+          git clone --depth=1 https://github.com/sigrokproject/libsigrokdecode.git /tmp/sr-build/libsigrokdecode
+          cd /tmp/sr-build/libsigrokdecode
+          ./autogen.sh
+          ./configure --prefix="$MINGW_PREFIX"
+          make -j"$(nproc)"
+          make install
+
+      - name: Build and install sigrok firmware (including fx2lafw for Saleae clones)
+        run: |
+          set -e
+          mkdir -p "$MINGW_PREFIX/share/sigrok-firmware"
+
+          # 1. Non-FX2 sigrok firmware
+          git clone --depth=1 https://github.com/sigrokproject/sigrok-firmware.git /tmp/sr-build/sigrok-firmware
+          cd /tmp/sr-build/sigrok-firmware
+          ./autogen.sh
+          ./configure --prefix="$MINGW_PREFIX"
+          make install
+
+          # 2. FX2LP logic analyzer firmware (Saleae Logic clones, Cypress FX2, etc.)
+          if (
+            git clone --depth=1 https://github.com/sigrokproject/sigrok-firmware-fx2lafw.git /tmp/sr-build/sigrok-firmware-fx2lafw
+            cd /tmp/sr-build/sigrok-firmware-fx2lafw
+            ./autogen.sh
+            ./configure --prefix="$MINGW_PREFIX"
+            make -j"$(nproc)"
+            make install
+          ); then
+            echo "Built sigrok-firmware-fx2lafw from source"
+          else
+            echo "Falling back to official sigrok-firmware-fx2lafw binary tarball"
+            curl -fsSL "https://sigrok.org/download/binary/sigrok-firmware-fx2lafw/sigrok-firmware-fx2lafw-bin-0.1.7.tar.gz" -o /tmp/sr-build/fx2lafw.tar.gz
+            tar -xzf /tmp/sr-build/fx2lafw.tar.gz -C /tmp/sr-build
+            cp /tmp/sr-build/sigrok-firmware-fx2lafw-bin-*/*.fw "$MINGW_PREFIX/share/sigrok-firmware/"
+          fi
+
+          ls -la "$MINGW_PREFIX/share/sigrok-firmware/"
+          test -f "$MINGW_PREFIX/share/sigrok-firmware/fx2lafw-saleae-logic.fw"
+
+      - name: Build PulseView2
+        run: |
+          set -e
+          cmake -S . -B build-win64 -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/dist/PulseView2" \
+            -DSTATIC_PKGDEPS_LIBS=FALSE \
+            -DDISABLE_WERROR=TRUE \
+            -DENABLE_TESTS=FALSE
+          ninja -C build-win64
+          ninja -C build-win64 install
+
+      - name: Bundle Windows runtime, DLLs, Qt6 plugins, firmware, and decoders
+        run: |
+          set -e
+          DIST="$PWD/dist/PulseView2"
+          mkdir -p "$DIST/share"
+
+          # Move pulseview.exe to top-level of dist bundle for clean portable layout
+          if [ -f "$DIST/bin/pulseview.exe" ]; then
+            mv "$DIST/bin/pulseview.exe" "$DIST/pulseview.exe"
+            rmdir "$DIST/bin" || true
+          fi
+          strip "$DIST/pulseview.exe" || true
+
+          # Deploy Qt6 runtime and plugins (including SVG)
+          if command -v windeployqt-qt6 >/dev/null 2>&1; then
+            WINDEPLOYQT=windeployqt-qt6
+          elif command -v windeployqt6 >/dev/null 2>&1; then
+            WINDEPLOYQT=windeployqt6
+          else
+            WINDEPLOYQT=windeployqt
+          fi
+          "$WINDEPLOYQT" --release --no-compiler-runtime --no-translations "$DIST/pulseview.exe"
+
+          # Copy all required UCRT64 DLL dependencies recursively
+          copy_deps() {
+            local target="$1"
+            ldd "$target" 2>/dev/null | awk -v pfx="$MINGW_PREFIX/bin/" 'index($3, pfx) == 1 { print $3 }' | while read -r dll; do
+              local base
+              base="$(basename "$dll")"
+              if [ ! -f "$DIST/$base" ]; then
+                cp "$dll" "$DIST/$base"
+                copy_deps "$dll"
+              fi
+            done
+          }
+          copy_deps "$DIST/pulseview.exe"
+          find "$DIST" -name '*.dll' | while read -r dll; do
+            copy_deps "$dll"
+          done
+
+          # Bundle sigrok firmware (critical for fx2lafw / Saleae Logic clones)
+          cp -r "$MINGW_PREFIX/share/sigrok-firmware" "$DIST/share/"
+          test -f "$DIST/share/sigrok-firmware/fx2lafw-saleae-logic.fw"
+
+          # Bundle protocol decoders and Python runtime for libsigrokdecode
+          cp -r "$MINGW_PREFIX/share/libsigrokdecode" "$DIST/share/"
+          PY_VER="$(python3 -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')"
+          mkdir -p "$DIST/lib"
+          cp -r "$MINGW_PREFIX/lib/$PY_VER" "$DIST/lib/"
+          find "$DIST/lib/$PY_VER" -type d -name '__pycache__' -exec rm -rf {} + || true
+          rm -rf "$DIST/lib/$PY_VER/test" "$DIST/lib/$PY_VER/tkinter" "$DIST/lib/$PY_VER/idlelib" || true
+
+      - name: Package portable ZIP and NSIS installer (.exe)
+        run: |
+          set -e
+          mkdir -p release-assets
+          DIST="$PWD/dist/PulseView2"
+
+          # 1. Portable ZIP
+          (cd "$PWD/dist" && zip -qr "$OLDPWD/release-assets/pulseview2-${ARTIFACT_VERSION}-win64-portable.zip" PulseView2)
+
+          # 2. NSIS Installer (.exe)
+          DIST_WIN="$(cygpath -w "$DIST")"
+          cat > build-win64/pulseview2-installer.nsi <<EOF
+          !include "MUI2.nsh"
+          Name "PulseView2 (${ARTIFACT_VERSION})"
+          OutFile "pulseview2-${ARTIFACT_VERSION}-win64-setup.exe"
+          InstallDir "\$PROGRAMFILES64\\PulseView2"
+          RequestExecutionLevel admin
+          !insertmacro MUI_PAGE_WELCOME
+          !insertmacro MUI_PAGE_DIRECTORY
+          !insertmacro MUI_PAGE_INSTFILES
+          !insertmacro MUI_PAGE_FINISH
+          !insertmacro MUI_UNPAGE_CONFIRM
+          !insertmacro MUI_UNPAGE_INSTFILES
+          !insertmacro MUI_LANGUAGE "English"
+          Section "PulseView2"
+            SetOutPath "\$INSTDIR"
+            File /r "${DIST_WIN}\\*.*"
+            CreateDirectory "\$SMPROGRAMS\\PulseView2"
+            CreateShortCut "\$SMPROGRAMS\\PulseView2\\PulseView2.lnk" "\$INSTDIR\\pulseview.exe"
+            CreateShortCut "\$SMPROGRAMS\\PulseView2\\Uninstall PulseView2.lnk" "\$INSTDIR\\uninstall.exe"
+            WriteUninstaller "\$INSTDIR\\uninstall.exe"
+          SectionEnd
+          Section "Uninstall"
+            Delete "\$SMPROGRAMS\\PulseView2\\PulseView2.lnk"
+            Delete "\$SMPROGRAMS\\PulseView2\\Uninstall PulseView2.lnk"
+            RMDir "\$SMPROGRAMS\\PulseView2"
+            RMDir /r "\$INSTDIR"
+          SectionEnd
+          EOF
+
+          makensis build-win64/pulseview2-installer.nsi
+          mv "build-win64/pulseview2-${ARTIFACT_VERSION}-win64-setup.exe" release-assets/
+          ls -lh release-assets/
+
+      - name: Upload Windows release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulseview2-windows-x86_64-release
+          path: release-assets/*
+
+  publish-release:
+    name: Publish Windows Release
+    needs: build-windows
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Windows release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: pulseview2-windows-x86_64-release
+          path: release-assets
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=${{ inputs.prerelease }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: "PulseView2 Windows (${{ steps.tag.outputs.name }})"
+          prerelease: ${{ steps.tag.outputs.prerelease }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/*.exe
+            release-assets/*.zip

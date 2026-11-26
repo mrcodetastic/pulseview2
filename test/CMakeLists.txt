@@ -25,8 +25,12 @@ set(pulseview_TEST_SOURCES
 	${PROJECT_SOURCE_DIR}/pv/logging.cpp
 	${PROJECT_SOURCE_DIR}/pv/mainwindow.cpp
 	${PROJECT_SOURCE_DIR}/pv/metadata_obj.cpp
+	${PROJECT_SOURCE_DIR}/pv/capturecollection.cpp
 	${PROJECT_SOURCE_DIR}/pv/session.cpp
+	${PROJECT_SOURCE_DIR}/pv/triggersettings.cpp
+	${PROJECT_SOURCE_DIR}/pv/triggersequence.cpp
 	${PROJECT_SOURCE_DIR}/pv/storesession.cpp
+	${PROJECT_SOURCE_DIR}/pv/iconhelper.cpp
 	${PROJECT_SOURCE_DIR}/pv/util.cpp
 	${PROJECT_SOURCE_DIR}/pv/binding/binding.cpp
 	${PROJECT_SOURCE_DIR}/pv/binding/device.cpp
@@ -48,6 +52,7 @@ set(pulseview_TEST_SOURCES
 	${PROJECT_SOURCE_DIR}/pv/dialogs/inputoutputoptions.cpp
 	${PROJECT_SOURCE_DIR}/pv/dialogs/settings.cpp
 	${PROJECT_SOURCE_DIR}/pv/dialogs/storeprogress.cpp
+	${PROJECT_SOURCE_DIR}/pv/dialogs/triggereditor.cpp
 	${PROJECT_SOURCE_DIR}/pv/prop/bool.cpp
 	${PROJECT_SOURCE_DIR}/pv/prop/double.cpp
 	${PROJECT_SOURCE_DIR}/pv/prop/enum.cpp
@@ -98,8 +103,12 @@ set(pulseview_TEST_SOURCES
 	data/analogsegment.cpp
 	data/logicsegment.cpp
 	data/segment.cpp
+	data/streamwindows.cpp
 	view/ruler.cpp
+	view/idle.cpp
 	test.cpp
+	trigger_settings.cpp
+	trigger_sequence.cpp
 	util.cpp
 )
 
@@ -126,6 +135,7 @@ set(pulseview_TEST_HEADERS
 	${PROJECT_SOURCE_DIR}/pv/dialogs/inputoutputoptions.hpp
 	${PROJECT_SOURCE_DIR}/pv/dialogs/settings.hpp
 	${PROJECT_SOURCE_DIR}/pv/dialogs/storeprogress.hpp
+	${PROJECT_SOURCE_DIR}/pv/dialogs/triggereditor.hpp
 	${PROJECT_SOURCE_DIR}/pv/popups/channels.hpp
 	${PROJECT_SOURCE_DIR}/pv/popups/deviceoptions.hpp
 	${PROJECT_SOURCE_DIR}/pv/prop/bool.hpp
@@ -202,6 +212,13 @@ if(ENABLE_DECODE)
 	)
 endif()
 
+# The SDK boundary test uses GNU-style linker wrapping on ELF and MinGW.
+if(ENABLE_DECODE AND (MINGW OR (UNIX AND NOT APPLE)) AND
+	(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+	list(APPEND pulseview_TEST_SOURCES decoder_lifecycle.cpp)
+	set(decoder_lifecycle_wrap TRUE)
+endif()
+
 # On MinGW we need to use static linking.
 if(NOT WIN32)
 	add_definitions(-DBOOST_TEST_DYN_LINK)
@@ -213,4 +230,9 @@ add_executable(pulseview-test
 )
 
 target_link_libraries(pulseview-test ${PULSEVIEW_LINK_LIBS})
+
+if(decoder_lifecycle_wrap)
+	set_property(TARGET pulseview-test APPEND_STRING PROPERTY LINK_FLAGS
+		" -Wl,--wrap=srd_session_send -Wl,--wrap=srd_session_destroy")
+endif()
 

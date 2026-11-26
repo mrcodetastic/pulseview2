@@ -35,11 +35,15 @@
 
 #include <QCheckBox>
 #include <QDebug>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QSettings>
 #include <QTextStream>
+#ifdef _WIN32
+#include <glib.h>
+#endif
 
 #include "config.h"
 
@@ -61,12 +65,6 @@
 #include "pv/session.hpp"
 #include "pv/util.hpp"
 #include "pv/data/segment.hpp"
-
-#ifdef ANDROID
-#include <libsigrokandroidutils/libsigrokandroidutils.h>
-#include "android/assetreader.hpp"
-#include "android/loghandler.hpp"
-#endif
 
 #ifdef _WIN32
 #include <QtPlugin>
@@ -151,7 +149,7 @@ void usage()
 {
 	fprintf(stdout,
 		"Usage:\n"
-		"  %s [OPTIONS] [FILE]\n"
+		"  %s [OPTIONS] [FILE...]\n"
 		"\n"
 		"Help Options:\n"
 		"  -h, -?, --help                  Show help option\n"
@@ -188,10 +186,30 @@ int main(int argc, char *argv[])
 
 	Application a(argc, argv);
 
-#ifdef ANDROID
-	srau_init_environment();
-	pv::AndroidLogHandler::install_callbacks();
-	pv::AndroidAssetReader asset_reader;
+#ifdef _WIN32
+	{
+		const QDir app_dir(QCoreApplication::applicationDirPath());
+		const auto set_env_if_missing = [](const char *name, const QString &dir_path) {
+			if (qEnvironmentVariableIsEmpty(name) && QFileInfo::exists(dir_path)) {
+				const QByteArray native = QDir::toNativeSeparators(dir_path).toUtf8();
+				qputenv(name, native);
+				g_setenv(name, native.constData(), FALSE);
+			}
+		};
+
+		const QString fw_here = app_dir.filePath("share/sigrok-firmware");
+		const QString fw_parent = app_dir.filePath("../share/sigrok-firmware");
+		set_env_if_missing("SIGROK_FIRMWARE_DIR",
+			QFileInfo::exists(fw_here) ? fw_here : fw_parent);
+
+		const QString dec_here = app_dir.filePath("share/libsigrokdecode/decoders");
+		const QString dec_parent = app_dir.filePath("../share/libsigrokdecode/decoders");
+		set_env_if_missing("SIGROKDECODE_DIR",
+			QFileInfo::exists(dec_here) ? dec_here : dec_parent);
+
+		if (QFileInfo::exists(app_dir.filePath("lib")))
+			set_env_if_missing("PYTHONHOME", app_dir.absolutePath());
+	}
 #endif
 
 	// Parse arguments
@@ -232,7 +250,8 @@ int main(int argc, char *argv[])
 				qDebug() << "ERROR: invalid log level spec.";
 				break;
 			}
-			context->set_log_level(sigrok::LogLevel::get(loglevel));
+			// No Context exists yet; libsigrok's log level is global.
+			sr_log_loglevel_set(loglevel);
 
 #ifdef ENABLE_DECODE
 			srd_log_loglevel_set(loglevel);
@@ -309,9 +328,6 @@ int main(int argc, char *argv[])
 		process_stacktrace(temp_path);
 #endif
 
-#ifdef ANDROID
-	context->set_resource_reader(&asset_reader);
-#endif
 	do {
 
 #ifdef ENABLE_DECODE
@@ -376,5 +392,8 @@ int main(int argc, char *argv[])
 
 	} while (false);
 
+	// Unregister while the global settings registry is still alive.
+	// The static logger destructor must not access a destroyed vector.
+	pv::logging.shutdown();
 	return ret;
 }

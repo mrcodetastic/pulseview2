@@ -20,6 +20,7 @@
 
 #include <QAction>
 #include <QMessageBox>
+#include <QSignalBlocker>
 
 #include "standardbar.hpp"
 #include "view.hpp"
@@ -42,6 +43,11 @@ StandardBar::StandardBar(Session &session, QWidget *parent,
 	action_view_zoom_out_(new QAction(this)),
 	action_view_zoom_fit_(new QAction(this)),
 	action_view_show_cursors_(new QAction(this)),
+	action_compress_idle_(new QAction(tr("Compress Idle"), this)),
+	idle_threshold_sb_(new QDoubleSpinBox(this)),
+	idle_status_(new QLabel(this)),
+	idle_threshold_action_(nullptr),
+	idle_status_action_(nullptr),
 	segment_display_mode_selector_(new QToolButton(this)),
 	action_sdm_last_(new QAction(this)),
 	action_sdm_last_complete_(new QAction(this)),
@@ -54,15 +60,21 @@ StandardBar::StandardBar(Session &session, QWidget *parent,
 	action_view_zoom_in_->setText(tr("Zoom &In"));
 	action_view_zoom_in_->setIcon(QIcon::fromTheme("zoom-in",
 		QIcon(":/icons/zoom-in.png")));
+	action_view_zoom_in_->setToolTip(tr("Zoom In (+)"));
+	action_view_zoom_in_->setStatusTip(tr("Zoom in on the time axis"));
 	// simply using Qt::Key_Plus shows no + in the menu
 	action_view_zoom_in_->setShortcut(QKeySequence::ZoomIn);
+	action_view_zoom_in_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 	connect(action_view_zoom_in_, SIGNAL(triggered(bool)),
 		this, SLOT(on_actionViewZoomIn_triggered()));
 
 	action_view_zoom_out_->setText(tr("Zoom &Out"));
 	action_view_zoom_out_->setIcon(QIcon::fromTheme("zoom-out",
 		QIcon(":/icons/zoom-out.png")));
+	action_view_zoom_out_->setToolTip(tr("Zoom Out (-)"));
+	action_view_zoom_out_->setStatusTip(tr("Zoom out on the time axis"));
 	action_view_zoom_out_->setShortcut(QKeySequence::ZoomOut);
+	action_view_zoom_out_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 	connect(action_view_zoom_out_, SIGNAL(triggered(bool)),
 		this, SLOT(on_actionViewZoomOut_triggered()));
 
@@ -70,16 +82,60 @@ StandardBar::StandardBar(Session &session, QWidget *parent,
 	action_view_zoom_fit_->setText(tr("Zoom to &Fit"));
 	action_view_zoom_fit_->setIcon(QIcon::fromTheme("zoom-fit-best",
 		QIcon(":/icons/zoom-fit-best.png")));
+	action_view_zoom_fit_->setToolTip(tr("Zoom to Fit (F)"));
+	action_view_zoom_fit_->setStatusTip(tr("Fit the entire capture in the view"));
 	action_view_zoom_fit_->setShortcut(QKeySequence(Qt::Key_F));
+	action_view_zoom_fit_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 	connect(action_view_zoom_fit_, SIGNAL(triggered(bool)),
 		this, SLOT(on_actionViewZoomFit_triggered(bool)));
 
 	action_view_show_cursors_->setCheckable(true);
 	action_view_show_cursors_->setIcon(QIcon(":/icons/show-cursors.svg"));
+	action_view_show_cursors_->setToolTip(tr("Show/Hide Measurement Cursors (C)"));
+	action_view_show_cursors_->setStatusTip(tr("Toggle vertical time-measurement cursors"));
 	action_view_show_cursors_->setShortcut(QKeySequence(Qt::Key_C));
+	action_view_show_cursors_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 	connect(action_view_show_cursors_, SIGNAL(triggered(bool)),
 		this, SLOT(on_actionViewShowCursors_triggered()));
 	action_view_show_cursors_->setText(tr("Show &Cursors"));
+
+	action_compress_idle_->setObjectName("actionCompressIdle");
+	action_compress_idle_->setCheckable(true);
+	action_compress_idle_->setToolTip(tr("Compress Idle Intervals: Visually fold long unchanged intervals on digital inputs (real times and samples stay unchanged)."));
+	action_compress_idle_->setStatusTip(tr("Visually fold long idle intervals in digital captures"));
+	idle_threshold_sb_->setObjectName("idleThreshold");
+	idle_threshold_sb_->setDecimals(3);
+	idle_threshold_sb_->setRange(0.001, 1000000);
+	idle_threshold_sb_->setPrefix(tr("Idle >= "));
+	idle_threshold_sb_->setSuffix(tr(" ms"));
+	idle_threshold_sb_->setValue(view_->idle_threshold() * 1000);
+	idle_threshold_sb_->setToolTip(tr("Minimum unchanged interval to fold"));
+	idle_status_->setObjectName("idleCompressionStatus");
+	idle_status_->setMaximumWidth(200);
+	connect(action_compress_idle_, &QAction::toggled, view_, &View::set_idle_compression);
+	connect(action_compress_idle_, &QAction::toggled, this, [this](bool enabled) {
+		if (idle_threshold_action_)
+			idle_threshold_action_->setVisible(enabled);
+		if (idle_status_action_)
+			idle_status_action_->setVisible(enabled && !idle_status_->text().isEmpty());
+	});
+	connect(idle_threshold_sb_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+		view_, [view](double ms) { view->set_idle_threshold(ms / 1000); });
+	connect(view_, &View::idle_compression_changed, this, [this](bool enabled, const QString& status) {
+		const QSignalBlocker blocker(action_compress_idle_);
+		action_compress_idle_->setChecked(enabled);
+		idle_status_->setText(status);
+		idle_status_->setToolTip(status);
+		if (idle_threshold_action_)
+			idle_threshold_action_->setVisible(enabled);
+		if (idle_status_action_)
+			idle_status_action_->setVisible(enabled && !status.isEmpty());
+		Q_EMIT idle_status_changed(enabled ? status : QString());
+	});
+	connect(&session_, &Session::capture_state_changed, this, [this](int state) {
+		action_compress_idle_->setEnabled(state == Session::Stopped);
+		idle_threshold_sb_->setEnabled(state == Session::Stopped);
+	});
 
 	action_sdm_last_->setIcon(QIcon(":/icons/view-displaymode-last_segment.svg"));
 	action_sdm_last_->setText(tr("Display last segment only"));
@@ -93,7 +149,7 @@ StandardBar::StandardBar(Session &session, QWidget *parent,
 
 	action_sdm_single_->setIcon(QIcon(":/icons/view-displaymode-single_segment.svg"));
 	action_sdm_single_->setText(tr("Display a single segment"));
-	connect(action_view_show_cursors_, SIGNAL(triggered(bool)),
+	connect(action_sdm_single_, SIGNAL(triggered(bool)),
 		this, SLOT(on_actionSDMSingle_triggered()));
 
 	segment_display_mode_selector_->addAction(action_sdm_last_);
@@ -103,6 +159,7 @@ StandardBar::StandardBar(Session &session, QWidget *parent,
 	segment_display_mode_selector_->hide();
 
 	segment_selector_->setMinimum(1);
+	segment_selector_->setObjectName("captured_segment");
 	segment_selector_->hide();
 
 	connect(&session_, SIGNAL(new_segment(int)),
@@ -110,6 +167,9 @@ StandardBar::StandardBar(Session &session, QWidget *parent,
 
 	connect(&session_, SIGNAL(segment_completed(int)),
 		view_, SLOT(on_segment_completed(int)));
+	connect(&session_, &Session::segment_completed, this, [this](int segment) {
+		if (view_->current_segment() == unsigned(segment)) on_segment_changed(segment);
+	});
 
 	connect(segment_selector_, SIGNAL(valueChanged(int)),
 		this, SLOT(on_segment_selected(int)));
@@ -139,16 +199,27 @@ Session &StandardBar::session() const
 
 void StandardBar::add_toolbar_widgets()
 {
-	// Setup the toolbar
-	addAction(action_view_zoom_in_);
-	addAction(action_view_zoom_out_);
-	addAction(action_view_zoom_fit_);
-	addSeparator();
-	addAction(action_view_show_cursors_);
-	multi_segment_actions_.push_back(addSeparator());
-	multi_segment_actions_.push_back(addWidget(segment_display_mode_selector_));
-	multi_segment_actions_.push_back(addWidget(segment_selector_));
-	addSeparator();
+	add_navigation_widgets(this);
+}
+
+void StandardBar::add_navigation_widgets(QToolBar *target)
+{
+	// Setup the navigation & inspection controls
+	target->addAction(action_view_zoom_in_);
+	target->addAction(action_view_zoom_out_);
+	target->addAction(action_view_zoom_fit_);
+	target->addSeparator();
+	target->addAction(action_view_show_cursors_);
+	target->addAction(action_compress_idle_);
+	idle_threshold_action_ = target->addWidget(idle_threshold_sb_);
+	idle_status_action_ = target->addWidget(idle_status_);
+	const bool idle_on = action_compress_idle_->isChecked();
+	idle_threshold_action_->setVisible(idle_on);
+	idle_status_action_->setVisible(idle_on && !idle_status_->text().isEmpty());
+
+	multi_segment_actions_.push_back(target->addSeparator());
+	multi_segment_actions_.push_back(target->addWidget(segment_display_mode_selector_));
+	multi_segment_actions_.push_back(target->addWidget(segment_selector_));
 
 	// Hide the multi-segment UI until we know that there are multiple segments
 	show_multi_segment_ui(false);
@@ -181,6 +252,11 @@ QAction* StandardBar::action_view_zoom_fit() const
 QAction* StandardBar::action_view_show_cursors() const
 {
 	return action_view_show_cursors_;
+}
+
+QAction* StandardBar::action_compress_idle() const
+{
+	return action_compress_idle_;
 }
 
 void StandardBar::on_actionViewZoomIn_triggered()
@@ -239,6 +315,25 @@ void StandardBar::on_new_segment(int new_segment_id)
 
 void StandardBar::on_segment_changed(int segment_id)
 {
+	QString tooltip = tr("Capture %1: %2\n%3")
+		.arg(segment_id + 1).arg(session_.segment_capture_outcome(segment_id),
+			session_.segment_capture_error(segment_id));
+	uint64_t origin, previous;
+	if (session_.segment_sample_origin(segment_id, origin) && session_.get_samplerate() > 0) {
+		const auto time_text = [](const util::Timestamp& time) {
+			return util::format_time_si(time, util::SIPrefix::unspecified, 9, "s", false);
+		};
+		tooltip += tr("\nSource sample: %1\nFrom stream start: %2 (received sample clock)")
+			.arg(qulonglong(origin)).arg(time_text(util::Timestamp(origin) / session_.get_samplerate()));
+		const auto triggers = session_.get_triggers(segment_id);
+		if (segment_id > 0 && session_.segment_sample_origin(segment_id-1, previous) && origin >= previous) {
+			const auto before = session_.get_triggers(segment_id-1);
+			if (!triggers.empty() && !before.empty())
+				tooltip += tr("\nTrigger spacing: %1").arg(time_text(
+					util::Timestamp(origin-previous)/session_.get_samplerate() + triggers.front()-before.front()));
+		}
+	} else tooltip += tr("\nEach capture has its own time axis. The time between captures is unknown.");
+	segment_selector_->setToolTip(tooltip);
 	// We need to adjust the value by 1 because internally, segments
 	// start at 0 while they start with 1 for the spinbox
 	const uint32_t ui_segment_id = segment_id + 1;

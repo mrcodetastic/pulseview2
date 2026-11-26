@@ -36,6 +36,10 @@
 
 /* Presence of features which depend on library versions. */
 #cmakedefine HAVE_SRD_SESSION_SEND_EOF 1
+#cmakedefine HAVE_SR_CONF_CAPTURE_STATUS 1
+#cmakedefine HAVE_SR_CONF_CAPTURE_ERROR 1
+#cmakedefine HAVE_SR_CONF_TRIGGER_OPTIONS 1
+#cmakedefine HAVE_SR_CONF_DUTY_CYCLE 1
 
 #define PV_GLIBMM_VERSION "@PV_GLIBMM_VERSION@"
 

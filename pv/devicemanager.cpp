@@ -20,6 +20,7 @@
 #include "devicemanager.hpp"
 #include "session.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <functional>
 #include <memory>
@@ -33,12 +34,14 @@
 #include <QDebug>
 #include <QObject>
 #include <QProgressDialog>
+#include <QSettings>
 
 #include <boost/filesystem.hpp>
 
 #include <pv/devices/hardwaredevice.hpp>
 #include <pv/util.hpp>
 
+using std::any_of;
 using std::bind;
 using std::list;
 using std::map;
@@ -249,24 +252,52 @@ DeviceManager::driver_scan(
 		return driver_devices;
 
 	// Remove any device instances from this driver from the device
-	// list. They will not be valid after the scan.
+	// list. They will not be valid after the scan. Devices that are
+	// currently open (in use by a session) are kept: a driver that holds
+	// its port exclusively cannot probe them again anyway, and dropping
+	// them would orphan the session's still open device.
+	list< shared_ptr<devices::HardwareDevice> > open_devices;
 	devices_.remove_if([&](shared_ptr<devices::HardwareDevice> device) {
-		return device->hardware_device()->driver() == driver; });
+		if (device->hardware_device()->driver() != driver)
+			return false;
+		if (device->is_open()) {
+			open_devices.push_back(device);
+			return false;
+		}
+		return true;
+	});
+
+	// If the scan fails, the kept devices are still what this driver has.
+	driver_devices = open_devices;
 
 	try {
 		// Do the scan
 		auto devices = driver->scan(drvopts);
 
 		// Add the scanned devices to the main list, set display names and sort.
+		list< shared_ptr<devices::HardwareDevice> > new_devices;
 		for (shared_ptr<sigrok::HardwareDevice>& device : devices) {
+			// An open device that the scan found again (drivers that do
+			// not lock their connection) is already in the list.
+			const string conn_id = device->connection_id();
+			const bool listed = !conn_id.empty() &&
+				any_of(open_devices.begin(), open_devices.end(),
+				[&](const shared_ptr<devices::HardwareDevice> &d) {
+					return d->hardware_device()->connection_id() == conn_id; });
+			if (listed)
+				continue;
 			const shared_ptr<devices::HardwareDevice> d(
 				new devices::HardwareDevice(context_, device));
-			driver_devices.push_back(d);
+			new_devices.push_back(d);
 		}
 
-		devices_.insert(devices_.end(), driver_devices.begin(),
-			driver_devices.end());
+		devices_.insert(devices_.end(), new_devices.begin(),
+			new_devices.end());
 		devices_.sort(bind(&DeviceManager::compare_devices, this, _1, _2));
+
+		driver_devices = new_devices;
+		driver_devices.insert(driver_devices.end(), open_devices.begin(),
+			open_devices.end());
 		driver_devices.sort(bind(
 			&DeviceManager::compare_devices, this, _1, _2));
 
@@ -357,6 +388,159 @@ bool DeviceManager::compare_devices(shared_ptr<devices::Device> a,
 	assert(a);
 	assert(b);
 	return a->display_name(*this).compare(b->display_name(*this)) < 0;
+}
+
+RecentDevice DeviceManager::make_recent_device(
+	const shared_ptr<devices::HardwareDevice> &device,
+	const QString &interface_type,
+	const QString &conn,
+	const QString &serialcomm) const
+{
+	RecentDevice entry;
+	if (!device || !device->hardware_device() || !device->hardware_device()->driver())
+		return entry;
+
+	const auto hw = device->hardware_device();
+	entry.driver_name = QString::fromStdString(hw->driver()->name());
+	entry.vendor = QString::fromStdString(hw->vendor());
+	entry.model = QString::fromStdString(hw->model());
+	entry.serial_number = QString::fromStdString(hw->serial_number());
+	entry.display_name = QString::fromStdString(device->display_name(*this));
+	if (entry.display_name.isEmpty())
+		entry.display_name = entry.driver_name;
+	entry.interface_type = interface_type.isEmpty() ? QString("usb") : interface_type;
+	entry.conn = conn;
+	entry.serialcomm = serialcomm;
+	return entry;
+}
+
+vector<RecentDevice> DeviceManager::recent_devices() const
+{
+	vector<RecentDevice> result;
+	QSettings settings;
+	const int count = settings.beginReadArray("RecentDevices");
+	for (int i = 0; i < count && i < MaxRecentDevices; i++) {
+		settings.setArrayIndex(i);
+		RecentDevice entry;
+		entry.display_name = settings.value("display_name").toString();
+		entry.driver_name = settings.value("driver_name").toString();
+		entry.vendor = settings.value("vendor").toString();
+		entry.model = settings.value("model").toString();
+		entry.serial_number = settings.value("serial_number").toString();
+		entry.interface_type = settings.value("interface_type", "usb").toString();
+		entry.conn = settings.value("conn").toString();
+		entry.serialcomm = settings.value("serialcomm").toString();
+		if (entry.is_valid())
+			result.push_back(entry);
+	}
+	settings.endArray();
+	return result;
+}
+
+void DeviceManager::record_recent_device(const RecentDevice &entry)
+{
+	if (!entry.is_valid())
+		return;
+
+	vector<RecentDevice> entries = recent_devices();
+	RecentDevice updated = entry;
+
+	// Deduplicate against existing entries and preserve saved serial/TCP
+	// parameters when re-recording a device selected outside Connect dialog.
+	for (auto it = entries.begin(); it != entries.end(); ) {
+		const bool same_dev =
+			it->driver_name == updated.driver_name &&
+			it->vendor == updated.vendor &&
+			it->model == updated.model &&
+			it->serial_number == updated.serial_number &&
+			(updated.conn.isEmpty() || it->conn == updated.conn);
+		if (same_dev) {
+			if (updated.conn.isEmpty() && !it->conn.isEmpty()) {
+				updated.interface_type = it->interface_type;
+				updated.conn = it->conn;
+				updated.serialcomm = it->serialcomm;
+			}
+			it = entries.erase(it);
+		} else {
+			++it;
+		}
+	}
+
+	entries.insert(entries.begin(), updated);
+	if (static_cast<int>(entries.size()) > MaxRecentDevices)
+		entries.resize(MaxRecentDevices);
+
+	QSettings settings;
+	settings.remove("RecentDevices");
+	settings.beginWriteArray("RecentDevices", static_cast<int>(entries.size()));
+	for (size_t i = 0; i < entries.size(); i++) {
+		settings.setArrayIndex(static_cast<int>(i));
+		settings.setValue("display_name", entries[i].display_name);
+		settings.setValue("driver_name", entries[i].driver_name);
+		settings.setValue("vendor", entries[i].vendor);
+		settings.setValue("model", entries[i].model);
+		settings.setValue("serial_number", entries[i].serial_number);
+		settings.setValue("interface_type", entries[i].interface_type);
+		settings.setValue("conn", entries[i].conn);
+		settings.setValue("serialcomm", entries[i].serialcomm);
+	}
+	settings.endArray();
+}
+
+void DeviceManager::record_recent_device(
+	const shared_ptr<devices::HardwareDevice> &device,
+	const QString &interface_type,
+	const QString &conn,
+	const QString &serialcomm)
+{
+	record_recent_device(make_recent_device(device, interface_type, conn, serialcomm));
+}
+
+shared_ptr<devices::HardwareDevice> DeviceManager::reconnect_device(
+	const RecentDevice &target)
+{
+	if (!target.is_valid())
+		return nullptr;
+
+	const auto drivers = context_->drivers();
+	const auto it = drivers.find(target.driver_name.toStdString());
+	if (it == drivers.end() || !it->second)
+		return nullptr;
+
+	shared_ptr<Driver> driver = it->second;
+	map<const ConfigKey *, VariantBase> drvopts;
+	if (!target.conn.isEmpty())
+		drvopts[ConfigKey::CONN] =
+			Glib::Variant<Glib::ustring>::create(target.conn.toUtf8().constData());
+	if (!target.serialcomm.isEmpty())
+		drvopts[ConfigKey::SERIALCOMM] =
+			Glib::Variant<Glib::ustring>::create(target.serialcomm.toUtf8().constData());
+
+	const list< shared_ptr<devices::HardwareDevice> > scanned =
+		driver_scan(driver, drvopts);
+	if (scanned.empty())
+		return nullptr;
+
+	// Prefer exact serial number match (ignoring dummy "0"), then vendor+model,
+	// then first device returned by this driver.
+	shared_ptr<devices::HardwareDevice> vendor_model_match;
+	for (const auto &dev : scanned) {
+		if (!dev || !dev->hardware_device())
+			continue;
+		const auto hw = dev->hardware_device();
+		const QString sn = QString::fromStdString(hw->serial_number());
+		const QString v = QString::fromStdString(hw->vendor());
+		const QString m = QString::fromStdString(hw->model());
+
+		if (!target.serial_number.isEmpty() && target.serial_number != "0" &&
+			sn == target.serial_number)
+			return dev;
+
+		if (!vendor_model_match && v == target.vendor && m == target.model)
+			vendor_model_match = dev;
+	}
+
+	return vendor_model_match ? vendor_model_match : scanned.front();
 }
 
 } // namespace pv

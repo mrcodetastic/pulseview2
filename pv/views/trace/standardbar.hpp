@@ -25,6 +25,8 @@
 
 #include <QAction>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QLabel>
 #include <QToolBar>
 #include <QToolButton>
 #include <QWidget>
@@ -60,9 +62,11 @@ public:
 	QAction* action_view_zoom_out() const;
 	QAction* action_view_zoom_fit() const;
 	QAction* action_view_show_cursors() const;
+	QAction* action_compress_idle() const;
 
 protected:
 	virtual void add_toolbar_widgets();
+	void add_navigation_widgets(QToolBar *target);
 
 	virtual void show_multi_segment_ui(const bool state);
 
@@ -73,6 +77,11 @@ protected:
 	QAction *const action_view_zoom_out_;
 	QAction *const action_view_zoom_fit_;
 	QAction *const action_view_show_cursors_;
+	QAction *const action_compress_idle_;
+	QDoubleSpinBox *idle_threshold_sb_;
+	QLabel *idle_status_;
+	QAction *idle_threshold_action_;
+	QAction *idle_status_action_;
 
 	QToolButton *segment_display_mode_selector_;
 	QAction *const action_sdm_last_;
@@ -83,6 +92,7 @@ protected:
 
 Q_SIGNALS:
 	void segment_selected(int segment_id);
+	void idle_status_changed(const QString &status);
 
 protected Q_SLOTS:
 	void on_actionViewZoomIn_triggered();

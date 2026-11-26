@@ -20,6 +20,9 @@
 #ifndef PULSEVIEW_PV_DEVICES_DEVICE_HPP
 #define PULSEVIEW_PV_DEVICES_DEVICE_HPP
 
+#include <functional>
+#include <cstdint>
+#include <vector>
 #include <memory>
 #include <string>
 
@@ -30,6 +33,7 @@ namespace sigrok {
 class ConfigKey;
 class Device;
 class Session;
+class Packet;
 } // namespace sigrok
 
 namespace pv {
@@ -40,6 +44,8 @@ namespace devices {
 
 class Device
 {
+public:
+	using FeedCallback = std::function<void(shared_ptr<sigrok::Device>, shared_ptr<sigrok::Packet>)>;
 protected:
 	Device() = default;
 
@@ -75,8 +81,19 @@ public:
 	virtual void run();
 
 	virtual void stop();
+	virtual bool can_stream_continuously() const;
+	// Suspend finite limits and return an explicit restoration action. No USB
+	// acquisition is started by this configuration operation.
+	virtual std::function<void()> suspend_capture_limits();
+	virtual void connect_datafeed(FeedCallback callback);
+	virtual void disconnect_datafeed();
+	void set_frame_callback(std::function<void(bool)> callback) { frame_callback_ = std::move(callback); }
+	virtual std::vector<std::string> frame_triggers() const { return {}; }
+	virtual bool frame_origin(uint64_t&) const { return false; }
 
 protected:
+	FeedCallback datafeed_callback_;
+	std::function<void(bool)> frame_callback_;
 	shared_ptr<sigrok::Session> session_;
 	shared_ptr<sigrok::Device> device_;
 };

@@ -26,6 +26,7 @@
 #endif
 
 #include <deque>
+#include <atomic>
 #include <functional>
 #include <map>
 #include <memory>
@@ -39,6 +40,8 @@
 
 #include <QObject>
 #include <QSettings>
+#include <pv/data/streamwindows.hpp>
+#include <pv/softwaretrigger.hpp>
 #include <QString>
 #include <QElapsedTimer>
 
@@ -47,6 +50,7 @@
 #include <libsigrokflow/libsigrokflow.hpp>
 #endif
 
+#include "devicemanager.hpp"
 #include "metadata_obj.hpp"
 #include "util.hpp"
 #include "views/viewbase.hpp"
@@ -81,11 +85,14 @@ class Option;
 class OutputFormat;
 class Packet;
 class Session;
+class Trigger;
 }  // namespace sigrok
 
 using sigrok::Option;
 
 namespace pv {
+
+struct HardwareTriggerOptions;
 
 class DeviceManager;
 
@@ -137,6 +144,9 @@ public:
 	const DeviceManager& device_manager() const;
 
 	shared_ptr<sigrok::Session> session() const;
+	void set_trigger(shared_ptr<sigrok::Trigger> trigger);
+	void set_trigger(shared_ptr<sigrok::Trigger> trigger, const HardwareTriggerOptions &options);
+	bool has_extended_trigger() const;
 
 	shared_ptr<devices::Device> device() const;
 
@@ -183,8 +193,29 @@ public:
 			map<string, Glib::VariantBase>());
 
 	capture_state get_capture_state() const;
+	QString capture_outcome() const;
+	QString capture_error() const;
+	bool device_needs_reconnect() const;
+	bool has_reconnect_target() const;
+	QString reconnect_target_name() const;
+	bool reconnect_last_device(QString *error_out = nullptr);
 	void start_capture(function<void (const QString)> error_handler);
 	void stop_capture();
+	void request_stop_capture();
+	bool stop_requested() const;
+	unsigned captures_per_run() const { return captures_per_run_.load(); }
+	bool set_captures_per_run(unsigned count);
+	bool stream_windows_enabled() const { return stream_windows_enabled_.load(); }
+	bool set_stream_windows_enabled(bool enabled);
+	const SoftwareTrigger& software_trigger() const { return software_trigger_; }
+	bool set_software_trigger(const SoftwareTrigger& config);
+	unsigned window_pretrigger_percent() const { return window_pretrigger_percent_.load(); }
+	bool set_window_pretrigger_percent(unsigned percent);
+	bool segment_sample_origin(uint32_t segment, uint64_t& origin) const;
+	uint32_t captured_segment_count() const;
+	QString segment_capture_outcome(uint32_t segment) const;
+	QString segment_capture_error(uint32_t segment) const;
+	void restore_segment_triggers(const vector<util::Timestamp>& triggers);
 
 	double get_samplerate() const;
 	Glib::DateTime get_acquisition_start_time() const;
@@ -245,13 +276,22 @@ private:
 	void feed_in_trigger();
 	void feed_in_frame_begin();
 	void feed_in_frame_end();
+	void record_segment_outcome();
+	void prepare_stream_windows();
+	void sample_stream_windows();
+	void accept_stream_window(data::StreamWindows::Window&& window);
+	void set_segment_origin(uint64_t origin);
 	void feed_in_logic(shared_ptr<sigrok::Logic> logic);
+	void feed_in_logic_payload(shared_ptr<sigrok::Logic> logic);
 	void feed_in_analog(shared_ptr<sigrok::Analog> analog);
 
 	void data_feed_in(shared_ptr<sigrok::Device> device,
 		shared_ptr<sigrok::Packet> packet);
 
 Q_SIGNALS:
+	void captures_per_run_changed(unsigned count);
+	void stream_windows_changed();
+	void capture_series_progress(unsigned current, unsigned total);
 	void capture_state_changed(int state);
 	void device_changed();
 
@@ -260,6 +300,7 @@ Q_SIGNALS:
 	void name_changed();
 
 	void trigger_event(int segment_id, util::Timestamp location);
+	void trigger_changed();
 
 	void new_segment(int new_segment_id);
 	void segment_completed(int segment_id);
@@ -267,6 +308,7 @@ Q_SIGNALS:
 	void data_received();
 
 	void add_view(ViewType type, Session *session);
+	void remove_view(shared_ptr<views::ViewBase> view);
 	void session_error_raised(const QString text, const QString info_text);
 
 public Q_SLOTS:
@@ -290,6 +332,28 @@ private:
 
 	mutable mutex sampling_mutex_; //!< Protects access to capture_state_
 	capture_state capture_state_;
+	bool stop_requested_; //!< Protected by sampling_mutex_
+	std::atomic_uint captures_per_run_{1};
+	std::atomic_bool stream_windows_enabled_{false};
+	SoftwareTrigger software_trigger_;
+	std::atomic_uint window_pretrigger_percent_{50};
+	bool active_window_mode_ = false;
+	uint64_t window_depth_ = 0, window_pre_ = 0, window_rate_ = 0;
+	std::vector<data::WindowTriggerStage> window_stages_;
+	std::unique_ptr<data::StreamWindows> window_extractor_;
+	QString window_packet_error_;
+	bool window_target_stop_ = false;
+	struct SegmentOrigin { bool known = false; uint64_t sample = 0; };
+	vector<SegmentOrigin> segment_origins_; // Protected by data_mutex_.
+	unsigned active_capture_count_ = 1;
+	bool series_frame_ = false; // Sampling-thread only; intermediate END seals a segment.
+	bool acquisition_received_samples_ = false;
+	bool acquisition_end_received_ = false;
+	struct SegmentOutcome { QString status, error; };
+	vector<SegmentOutcome> segment_outcomes_; // Protected by data_mutex_.
+	QString capture_outcome_, capture_error_;
+	std::atomic_bool device_reconnect_needed_{false};
+	RecentDevice last_hardware_device_;
 
 	vector< shared_ptr<data::SignalBase> > signalbases_;
 	unordered_set< shared_ptr<data::SignalData> > all_signal_data_;

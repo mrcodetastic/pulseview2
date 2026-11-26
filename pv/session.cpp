@@ -17,6 +17,8 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <config.h>
+
 #include <cassert>
 #include <memory>
 #include <mutex>
@@ -31,6 +33,9 @@
 #include "devicemanager.hpp"
 #include "mainwindow.hpp"
 #include "session.hpp"
+#include <pv/capturecollection.hpp>
+#include "triggersequence.hpp"
+#include "triggersettings.hpp"
 #include "util.hpp"
 
 #include "data/analog.hpp"
@@ -123,6 +128,7 @@ Session::Session(DeviceManager &device_manager, QString name) :
 	default_name_(name),
 	name_(name),
 	capture_state_(Stopped),
+	stop_requested_(false),
 	cur_samplerate_(0),
 	data_saved_(true)
 {
@@ -136,6 +142,20 @@ Session::~Session()
 
 	// Stop and join to the thread
 	stop_capture();
+	if (device_) device_->disconnect_datafeed();
+
+	// Release the device. The DeviceManager keeps the device object alive,
+	// so it would otherwise stay open after the session is gone; serial
+	// drivers hold their port exclusively while open, which blocks every
+	// later scan and session from using the device. Never let an error
+	// escape the destructor.
+	if (device_) {
+		try {
+			device_->close();
+		} catch (const sigrok::Error &e) {
+			qWarning() << tr("Failed to close device: %1").arg(e.what());
+		}
+	}
 
 	for (SignalGroup* group : signal_groups_) {
 		group->clear();
@@ -163,6 +183,24 @@ shared_ptr<sigrok::Session> Session::session() const
 shared_ptr<devices::Device> Session::device() const
 {
 	return device_;
+}
+
+void Session::set_trigger(shared_ptr<sigrok::Trigger> trigger)
+{
+	set_trigger(std::move(trigger), HardwareTriggerOptions());
+}
+
+bool Session::has_extended_trigger() const
+{
+	return device_ && read_hardware_trigger(device_->device()).mode != "default";
+}
+
+void Session::set_trigger(shared_ptr<sigrok::Trigger> trigger, const HardwareTriggerOptions &options)
+{
+	if (!session())
+		return;
+	apply_trigger_configuration(session(), device_->device(), trigger, options);
+	trigger_changed();
 }
 
 QString Session::name() const
@@ -220,6 +258,11 @@ bool Session::data_saved() const
 
 void Session::save_setup(QSettings &settings) const
 {
+	settings.setValue("captures_per_run", captures_per_run());
+	settings.setValue("stream_windows/enabled", stream_windows_enabled());
+	settings.setValue("stream_windows/pretrigger", window_pretrigger_percent());
+	save_software_trigger(settings, software_trigger_);
+	save_trigger_settings(settings, session(), device_ ? device_->device() : nullptr);
 	int i;
 	int decode_signal_count = 0;
 	int gen_signal_count = 0;
@@ -251,9 +294,11 @@ void Session::save_setup(QSettings &settings) const
 	// Save view states and their signal settings
 	// Note: main_view must be saved as view0
 	i = 0;
-	settings.beginGroup("view" + QString::number(i++));
-	main_view_->save_settings(settings);
-	settings.endGroup();
+	if (main_view_) {
+		settings.beginGroup("view" + QString::number(i++));
+		main_view_->save_settings(settings);
+		settings.endGroup();
+	}
 
 	for (const shared_ptr<views::ViewBase>& view : views_) {
 		if (view != main_view_) {
@@ -375,11 +420,46 @@ void Session::save_settings(QSettings &settings) const
 
 void Session::restore_setup(QSettings &settings)
 {
+	// Reset main view, remove all other views
+	main_view_->reset_view_state();
+	for (auto &v : vector< shared_ptr<views::ViewBase> >(views_)) {
+		if (v != main_view_)
+			remove_view(v);
+	}
+
+	// Remove generated signals and decoders
+	for (shared_ptr<data::SignalBase> base : vector< shared_ptr<data::SignalBase> >(signalbases_)) {
+#ifdef ENABLE_DECODE
+		if (base->is_decode_signal()) {
+			shared_ptr<data::DecodeSignal> ds = dynamic_pointer_cast<data::DecodeSignal>(base);
+			assert(ds);
+			remove_decode_signal(ds);
+		} else
+#endif
+		if (base->is_generated()) {
+			remove_generated_signal(base);
+		}
+	}
+
+	set_captures_per_run(settings.value("captures_per_run", 1).toUInt());
+	set_stream_windows_enabled(settings.value("stream_windows/enabled", false).toBool());
+	set_window_pretrigger_percent(settings.value("stream_windows/pretrigger", 50).toUInt());
+	set_software_trigger(restore_software_trigger(settings));
 	// Restore channels
 	for (shared_ptr<data::SignalBase> base : signalbases_) {
 		settings.beginGroup(base->internal_name());
 		base->restore_settings(settings);
 		settings.endGroup();
+	}
+
+	if (session() && device_ && device_->device()) {
+		try {
+			if (restore_trigger_settings(settings, device_manager_.context(),
+					device_->device(), session()))
+				trigger_changed();
+		} catch (const std::exception &error) {
+			qWarning() << tr("Failed to restore trigger:") << error.what();
+		}
 	}
 
 	// Restore generated signals
@@ -419,16 +499,29 @@ void Session::restore_setup(QSettings &settings)
 
 	// Restore views
 	int views = settings.value("views").toInt();
+	vector<shared_ptr<views::ViewBase>> restored_views;
 
 	for (int i = 0; i < views; i++) {
 		settings.beginGroup("view" + QString::number(i));
 
+		shared_ptr<views::ViewBase> restored;
 		if (i > 0) {
-			views::ViewType type = (views::ViewType)settings.value("type").toInt();
-			add_view(type, this);
-			views_.back()->restore_settings(settings);
+			bool valid_type;
+			const int type = settings.value("type").toInt(&valid_type);
+			if (valid_type && type >= 0 && type < views::ViewTypeCount) {
+				const auto previous_size = views_.size();
+				add_view(static_cast<views::ViewType>(type), this);
+				if (views_.size() > previous_size)
+					restored = views_.back();
+			}
 		} else
-			main_view_->restore_settings(settings);
+			restored = main_view_;
+		if (restored)
+			restored->restore_settings(settings);
+		else
+			qWarning() << tr("Skipping unavailable view in session setup:") << i;
+		// Preserve setup indexes even when an optional view is unavailable.
+		restored_views.push_back(restored);
 
 		settings.endGroup();
 	}
@@ -441,8 +534,15 @@ void Session::restore_setup(QSettings &settings)
 
 		shared_ptr<views::ViewBase> vb;
 		shared_ptr<views::trace::View> tv;
-		if (settings.contains("assoc_view"))
-			vb = views_.at(settings.value("assoc_view").toInt());
+		if (settings.contains("assoc_view")) {
+			bool valid_index;
+			const int index = settings.value("assoc_view").toInt(&valid_index);
+			const auto &available = restored_views.empty() ? views_ : restored_views;
+			if (valid_index && index >= 0 && static_cast<size_t>(index) < available.size())
+				vb = available[index];
+			else
+				qWarning() << tr("Skipping invalid view reference in session setup.");
+		}
 
 		if (vb)
 			tv = dynamic_pointer_cast<views::trace::View>(vb);
@@ -567,13 +667,16 @@ void Session::set_device(shared_ptr<devices::Device> device)
 	// Ensure we are not capturing before setting the device
 	stop_capture();
 
-	if (device_)
+	if (device_) {
+		device_->disconnect_datafeed();
 		device_->close();
+	}
 
 	device_.reset();
 
 	// Revert name back to default name (e.g. "Session 1") as the data is gone
 	name_ = default_name_;
+	save_path_.clear();
 	name_changed();
 
 	// Remove all stored data and reset all views
@@ -608,6 +711,12 @@ void Session::set_device(shared_ptr<devices::Device> device)
 	signals_changed();
 
 	device_ = std::move(device);
+	device_reconnect_needed_ = false;
+	{
+		lock_guard<recursive_mutex> lock(data_mutex_);
+		capture_outcome_.clear();
+		capture_error_.clear();
+	}
 
 	try {
 		device_->open();
@@ -617,18 +726,196 @@ void Session::set_device(shared_ptr<devices::Device> device)
 	} catch (const sigrok::Error &e) {
 		device_.reset();
 		MainWindow::show_session_error(tr("Failed to open device"), QString(e.what()));
+	} catch (const std::exception& e) {
+		device_.reset();
+		MainWindow::show_session_error(tr("Failed to open device"), QString::fromUtf8(e.what()));
 	}
 
 	if (device_) {
-		device_->session()->add_datafeed_callback([=]
+		device_->connect_datafeed([=]
 			(shared_ptr<sigrok::Device> device, shared_ptr<Packet> packet) {
 				data_feed_in(device, packet);
 			});
 
+		device_->set_frame_callback([this](bool begin) {
+			if (begin) {
+				{ lock_guard<recursive_mutex> lock(data_mutex_);
+				  capture_outcome_.clear(); capture_error_.clear(); }
+				feed_in_frame_begin();
+			} else {
+				std::vector<util::Timestamp> triggers;
+				if (acquisition_received_samples_)
+					for (const auto& text : device_->frame_triggers()) {
+						const util::Timestamp time(text);
+						if (time <= util::Timestamp(get_segment_sample_count(highest_segment_id_)) / get_samplerate())
+							triggers.push_back(time);
+					}
+				restore_segment_triggers(triggers);
+				uint64_t origin;
+				if (acquisition_received_samples_ && device_->frame_origin(origin)) set_segment_origin(origin);
+				feed_in_frame_end();
+			}
+		});
 		update_signals();
+
+		if (auto hw = dynamic_pointer_cast<devices::HardwareDevice>(device_)) {
+			const RecentDevice rec = device_manager_.make_recent_device(hw);
+			if (rec.is_valid()) {
+				device_manager_.record_recent_device(rec);
+				const auto recent = device_manager_.recent_devices();
+				last_hardware_device_ = recent.empty() ? rec : recent.front();
+			}
+		}
 	}
 
 	device_changed();
+}
+
+bool Session::has_reconnect_target() const
+{
+	if (auto hw = dynamic_pointer_cast<devices::HardwareDevice>(device_)) {
+		if (hw->hardware_device() && hw->hardware_device()->driver() &&
+			hw->hardware_device()->driver()->name() != "demo")
+			return true;
+	}
+	if (last_hardware_device_.is_valid())
+		return true;
+	return !device_manager_.recent_devices().empty();
+}
+
+QString Session::reconnect_target_name() const
+{
+	if (auto hw = dynamic_pointer_cast<devices::HardwareDevice>(device_)) {
+		if (hw->hardware_device() && hw->hardware_device()->driver() &&
+			hw->hardware_device()->driver()->name() != "demo")
+			return QString::fromStdString(hw->display_name(device_manager_));
+	}
+	if (last_hardware_device_.is_valid())
+		return last_hardware_device_.display_name;
+	const auto recent = device_manager_.recent_devices();
+	if (!recent.empty())
+		return recent.front().display_name;
+	return QString();
+}
+
+bool Session::reconnect_last_device(QString *error_out)
+{
+	stop_capture();
+
+	RecentDevice target;
+	if (auto hw = dynamic_pointer_cast<devices::HardwareDevice>(device_)) {
+		const RecentDevice cur = device_manager_.make_recent_device(hw);
+		if (cur.is_valid()) {
+			target = cur;
+			// Preserve saved serial/TCP connection params if recorded previously
+			for (const auto &r : device_manager_.recent_devices()) {
+				if (r.driver_name == cur.driver_name &&
+					r.vendor == cur.vendor && r.model == cur.model &&
+					r.serial_number == cur.serial_number && !r.conn.isEmpty()) {
+					target.interface_type = r.interface_type;
+					target.conn = r.conn;
+					target.serialcomm = r.serialcomm;
+					break;
+				}
+			}
+			last_hardware_device_ = target;
+		}
+	}
+	if (!target.is_valid() && last_hardware_device_.is_valid())
+		target = last_hardware_device_;
+	if (!target.is_valid()) {
+		const auto recent = device_manager_.recent_devices();
+		if (!recent.empty())
+			target = recent.front();
+	}
+	if (!target.is_valid()) {
+		if (error_out)
+			*error_out = tr("No previous hardware device to reconnect to.");
+		return false;
+	}
+
+	// Snapshot current capture settings before closing the stale handle
+	uint64_t saved_samplerate = 0;
+	uint64_t saved_limit_samples = 0;
+	vector<bool> saved_channel_enabled;
+	vector<QString> saved_channel_names;
+
+	if (device_ && device_->device()) {
+		const auto sr_dev = device_->device();
+		try {
+			saved_samplerate = device_->read_config<uint64_t>(ConfigKey::SAMPLERATE);
+		} catch (...) { }
+		try {
+			saved_limit_samples = device_->read_config<uint64_t>(ConfigKey::LIMIT_SAMPLES);
+		} catch (...) { }
+		for (const auto &ch : sr_dev->channels())
+			saved_channel_enabled.push_back(ch->enabled());
+		for (const auto &sb : signalbases_) {
+			if (sb && sb->channel())
+				saved_channel_names.push_back(sb->name());
+		}
+	}
+
+	// Close and release the stale handle so driver_scan() does not preserve it
+	if (device_) {
+		try {
+			device_->disconnect_datafeed();
+			device_->close();
+		} catch (...) { }
+		device_.reset();
+	}
+
+	shared_ptr<devices::HardwareDevice> found =
+		device_manager_.reconnect_device(target);
+	if (!found) {
+		device_changed();
+		if (error_out) {
+			*error_out = tr("Could not find %1. Check that the device is plugged in and try again.")
+				.arg(target.display_name);
+		}
+		return false;
+	}
+
+	set_device(found);
+	if (!device_ || !device_->device()) {
+		if (error_out)
+			*error_out = tr("Found %1, but failed to open it.").arg(target.display_name);
+		return false;
+	}
+
+	// Restore capture settings and channel configuration
+	const auto sr_dev = device_->device();
+	if (saved_samplerate > 0 &&
+		sr_dev->config_check(ConfigKey::SAMPLERATE, sigrok::Capability::SET)) {
+		try {
+			sr_dev->config_set(ConfigKey::SAMPLERATE,
+				Glib::Variant<guint64>::create(saved_samplerate));
+		} catch (...) { }
+	}
+	if (saved_limit_samples > 0 &&
+		sr_dev->config_check(ConfigKey::LIMIT_SAMPLES, sigrok::Capability::SET)) {
+		try {
+			sr_dev->config_set(ConfigKey::LIMIT_SAMPLES,
+				Glib::Variant<guint64>::create(saved_limit_samples));
+		} catch (...) { }
+	}
+
+	const auto channels = sr_dev->channels();
+	if (channels.size() == saved_channel_enabled.size()) {
+		for (size_t i = 0; i < channels.size(); i++)
+			channels[i]->set_enabled(saved_channel_enabled[i]);
+	}
+	size_t name_idx = 0;
+	for (auto &sb : signalbases_) {
+		if (sb && sb->channel() && name_idx < saved_channel_names.size()) {
+			if (!saved_channel_names[name_idx].isEmpty())
+				sb->set_name(saved_channel_names[name_idx]);
+			name_idx++;
+		}
+	}
+
+	device_changed();
+	return true;
 }
 
 void Session::set_default_device()
@@ -743,7 +1030,7 @@ void Session::load_file(QString file_name, QString setup_file_name,
 
 	// In the absence of a caller's format spec, try to auto detect.
 	// Assume "sigrok session file" upon lookup miss.
-	if (!format)
+	if (!format && !CaptureCollection::is_collection(file_name))
 		format = device_manager_.context()->input_format_match(file_name.toStdString());
 	try {
 		if (format)
@@ -762,16 +1049,12 @@ void Session::load_file(QString file_name, QString setup_file_name,
 		return;
 	}
 
-	if (!device_) {
-		MainWindow::show_session_error(errorMessage, "");
+	if (!device_)
 		return;
-	}
 
 	// Use the input file with .pvs extension if no setup file was given
 	if (setup_file_name.isEmpty()) {
-		setup_file_name = file_name;
-		setup_file_name.truncate(setup_file_name.lastIndexOf('.'));
-		setup_file_name.append(".pvs");
+		setup_file_name = util::setup_file_path(file_name);
 	}
 
 	if (QFileInfo::exists(setup_file_name) && QFileInfo(setup_file_name).isReadable()) {
@@ -797,6 +1080,23 @@ Session::capture_state Session::get_capture_state() const
 	return capture_state_;
 }
 
+QString Session::capture_outcome() const
+{
+	lock_guard<recursive_mutex> lock(data_mutex_);
+	return capture_outcome_;
+}
+
+QString Session::capture_error() const
+{
+	lock_guard<recursive_mutex> lock(data_mutex_);
+	return capture_error_;
+}
+
+bool Session::device_needs_reconnect() const
+{
+	return device_reconnect_needed_.load();
+}
+
 void Session::start_capture(function<void (const QString)> error_handler)
 {
 	if (!device_) {
@@ -807,6 +1107,10 @@ void Session::start_capture(function<void (const QString)> error_handler)
 	stop_capture();
 
 	// Check that at least one channel is enabled
+	if (device_needs_reconnect()) {
+		error_handler(tr("Device disconnected. Reconnect USB, then use Connect to Device, Scan, and select the analyzer again."));
+		return;
+	}
 	const shared_ptr<sigrok::Device> sr_dev = device_->device();
 	if (sr_dev) {
 		const auto channels = sr_dev->channels();
@@ -818,12 +1122,57 @@ void Session::start_capture(function<void (const QString)> error_handler)
 		}
 	}
 
-	// Clear signal data
-	for (const shared_ptr<data::SignalData>& d : all_signal_data_)
-		d->clear();
+	active_capture_count_ = using_file_device() ? 1 : captures_per_run();
+	active_window_mode_ = stream_windows_enabled() && !using_file_device();
+	if (active_capture_count_ > 1) {
+		if (!sr_dev) { error_handler(tr("No digital device is available.")); return; }
+		bool digital = false;
+		for (const auto& channel : sr_dev->channels()) {
+			if (!channel->enabled()) continue;
+			if (channel->type() != sigrok::ChannelType::LOGIC) {
+				error_handler(tr("Repeated captures require a finite digital acquisition."));
+				return;
+			}
+			digital = true;
+		}
+		bool continuous = false;
+		try {
+			if (sr_dev->config_check(sigrok::ConfigKey::CONTINUOUS, sigrok::Capability::GET))
+				continuous = g_variant_get_boolean(sr_dev->config_get(sigrok::ConfigKey::CONTINUOUS).gobj());
+		} catch (const sigrok::Error&) { }
+		bool finite = false;
+		try {
+			for (const auto key : {sigrok::ConfigKey::LIMIT_SAMPLES, sigrok::ConfigKey::LIMIT_MSEC})
+				if (sr_dev->config_check(key, sigrok::Capability::GET) &&
+					g_variant_get_uint64(sr_dev->config_get(key).gobj())) finite = true;
+		} catch (const sigrok::Error&) { }
+		if (!digital || continuous || !finite) {
+			error_handler(tr("Repeated captures require a finite digital acquisition."));
+			return;
+		}
+	}
+	if (active_window_mode_) {
+		try { prepare_stream_windows(); }
+		catch (const std::exception& error) { error_handler(QString::fromUtf8(error.what())); return; }
+	}
 
-	trigger_list_.clear();
-	segment_sample_count_.clear();
+
+	const auto previous_start_time = acq_start_time_;
+	acq_start_time_ = Glib::DateTime::create_now_local();
+
+	// Publish startup before the worker starts: Stop must also cancel a start
+	// or the quiet interval between two acquisitions.
+	{ lock_guard<mutex> lock(sampling_mutex_); stop_requested_ = false; }
+	acq_time_.start();
+	set_capture_state(AwaitingTrigger);
+	try {
+		sampling_thread_ = std::thread(&Session::sample_thread_proc, this, error_handler);
+	} catch (const std::exception& error) {
+		acq_start_time_ = previous_start_time;
+		set_capture_state(Stopped);
+		error_handler(QString::fromUtf8(error.what()));
+		return;
+	}
 
 	// Revert name back to default name (e.g. "Session 1") for real devices
 	// as the (possibly saved) data is gone. File devices keep their name.
@@ -832,19 +1181,114 @@ void Session::start_capture(function<void (const QString)> error_handler)
 
 	if (hw_device) {
 		name_ = default_name_;
+		save_path_.clear();
 		name_changed();
 	}
+}
 
-	acq_start_time_ = Glib::DateTime::create_now_local();
+bool Session::stop_requested() const
+{
+	lock_guard<mutex> lock(sampling_mutex_);
+	return stop_requested_;
+}
 
-	// Begin the session
-	sampling_thread_ = std::thread(&Session::sample_thread_proc, this, error_handler);
+bool Session::set_captures_per_run(unsigned count)
+{
+	if (!count || count > 10000 || get_capture_state() != Stopped) return false;
+	if (captures_per_run_.exchange(count) != count) captures_per_run_changed(count);
+	return true;
+}
+
+bool Session::set_stream_windows_enabled(bool enabled)
+{
+	if (get_capture_state() != Stopped) return false;
+	if (stream_windows_enabled_.exchange(enabled) != enabled) stream_windows_changed();
+	return true;
+}
+
+bool Session::set_window_pretrigger_percent(unsigned percent)
+{
+	if (!percent || percent > 90 || get_capture_state() != Stopped) return false;
+	if (window_pretrigger_percent_.exchange(percent) != percent) stream_windows_changed();
+	return true;
+}
+
+bool Session::segment_sample_origin(uint32_t segment, uint64_t& origin) const
+{
+	lock_guard<recursive_mutex> lock(data_mutex_);
+	if (segment >= segment_origins_.size() || !segment_origins_[segment].known) return false;
+	origin = segment_origins_[segment].sample;
+	return true;
+}
+
+void Session::set_segment_origin(uint64_t origin)
+{
+	lock_guard<recursive_mutex> lock(data_mutex_);
+	if (highest_segment_id_ < 0) return;
+	if (segment_origins_.size() <= size_t(highest_segment_id_)) segment_origins_.resize(highest_segment_id_ + 1);
+	segment_origins_[highest_segment_id_].known = true;
+	segment_origins_[highest_segment_id_].sample = origin;
+}
+
+uint32_t Session::captured_segment_count() const
+{
+	lock_guard<recursive_mutex> lock(data_mutex_);
+	return segment_sample_count_.size();
+}
+
+QString Session::segment_capture_outcome(uint32_t segment) const
+{
+	lock_guard<recursive_mutex> lock(data_mutex_);
+	return segment < segment_outcomes_.size() ? segment_outcomes_[segment].status : capture_outcome_;
+}
+
+QString Session::segment_capture_error(uint32_t segment) const
+{
+	lock_guard<recursive_mutex> lock(data_mutex_);
+	return segment < segment_outcomes_.size() ? segment_outcomes_[segment].error : capture_error_;
+}
+
+void Session::record_segment_outcome()
+{
+	lock_guard<recursive_mutex> lock(data_mutex_);
+	if (!acquisition_received_samples_ || highest_segment_id_ < 0) return;
+	if (segment_outcomes_.size() <= size_t(highest_segment_id_))
+		segment_outcomes_.resize(highest_segment_id_ + 1);
+	segment_outcomes_[highest_segment_id_] = {capture_outcome_.isEmpty() ?
+		(stop_requested() ? QString("stopped") : QString("complete")) : capture_outcome_, capture_error_};
+}
+
+void Session::restore_segment_triggers(const vector<util::Timestamp>& triggers)
+{
+	lock_guard<recursive_mutex> lock(data_mutex_);
+	if (highest_segment_id_ < 0) return;
+	for (const auto& time : triggers) {
+		trigger_list_.emplace_back(highest_segment_id_, time);
+		trigger_event(highest_segment_id_, time);
+	}
+}
+
+void Session::request_stop_capture()
+{
+	{
+		lock_guard<mutex> lock(sampling_mutex_);
+		if (capture_state_ == Stopped || stop_requested_)
+			return;
+		stop_requested_ = true;
+	}
+	try {
+		device_->stop();
+	} catch (...) {
+		// Keep the request latched if start is still in progress. The worker
+		// checks it again after start and before every subsequent acquisition.
+		throw;
+	}
 }
 
 void Session::stop_capture()
 {
 	if (get_capture_state() != Stopped)
-		device_->stop();
+		request_stop_capture();
 
 	// Check that sampling stopped
 	if (sampling_thread_.joinable())
@@ -915,6 +1359,8 @@ bool Session::has_view(shared_ptr<views::ViewBase> view)
 
 double Session::get_samplerate() const
 {
+	// Capture replacement clears the segment containers under this same lock.
+	lock_guard<recursive_mutex> lock(data_mutex_);
 	double samplerate = 0.0;
 
 	for (const shared_ptr<pv::data::SignalData>& d : all_signal_data_) {
@@ -943,6 +1389,7 @@ uint32_t Session::get_highest_segment_id() const
 
 uint64_t Session::get_segment_sample_count(uint32_t segment_id) const
 {
+	lock_guard<recursive_mutex> lock(data_mutex_);
 	if (segment_id < segment_sample_count_.size())
 		return segment_sample_count_[segment_id];
 	else
@@ -951,6 +1398,7 @@ uint64_t Session::get_segment_sample_count(uint32_t segment_id) const
 
 vector<util::Timestamp> Session::get_triggers(uint32_t segment_id) const
 {
+	lock_guard<recursive_mutex> lock(data_mutex_);
 	vector<util::Timestamp> result;
 
 	for (const pair<uint32_t, util::Timestamp>& entry : trigger_list_)
@@ -1060,18 +1508,19 @@ MetadataObjManager* Session::metadata_obj_manager()
 
 void Session::set_capture_state(capture_state state)
 {
-	if (state == capture_state_)
-		return;
-
-	if (state == Running)
-		acq_time_.restart();
-	if (state == Stopped)
-		qDebug("Acquisition took %.2f s", acq_time_.elapsed() / 1000.);
-
 	{
 		lock_guard<mutex> lock(sampling_mutex_);
+		if (state == capture_state_)
+			return;
 		capture_state_ = state;
+		if (state == Stopped)
+			stop_requested_ = false;
 	}
+
+	if (state == Running && !acq_time_.isValid())
+		acq_time_.start();
+	if (state == Stopped)
+		qDebug("Acquisition took %.2f s", acq_time_.elapsed() / 1000.);
 
 	capture_state_changed(state);
 }
@@ -1145,6 +1594,8 @@ void Session::update_signals()
 
 				connect(this, SIGNAL(capture_state_changed(int)),
 					signalbase.get(), SLOT(on_capture_state_changed(int)));
+				connect(signalbase.get(), SIGNAL(enabled_changed(bool)),
+					this, SIGNAL(signals_changed()));
 				break;
 
 			case SR_CHANNEL_ANALOG:
@@ -1157,6 +1608,8 @@ void Session::update_signals()
 
 				connect(this, SIGNAL(capture_state_changed(int)),
 					signalbase.get(), SLOT(on_capture_state_changed(int)));
+				connect(signalbase.get(), SIGNAL(enabled_changed(bool)),
+					this, SIGNAL(signals_changed()));
 				break;
 			}
 		}
@@ -1228,8 +1681,23 @@ shared_ptr<data::SignalBase> Session::signalbase_from_channel(
 }
 
 void Session::sample_thread_proc(function<void (const QString)> error_handler)
+try
 {
 	assert(error_handler);
+
+	// Replace the previous acquisition only after this worker exists. If
+	// thread construction fails, its samples and metadata remain available.
+	{
+		lock_guard<recursive_mutex> lock(data_mutex_);
+		capture_outcome_.clear();
+		capture_error_.clear();
+		for (const shared_ptr<data::SignalData>& d : all_signal_data_)
+			d->clear();
+		trigger_list_.clear();
+		segment_sample_count_.clear();
+		segment_outcomes_.clear();
+		segment_origins_.clear();
+	}
 
 #ifdef ENABLE_FLOW
 	pipeline_ = Pipeline::create();
@@ -1280,29 +1748,63 @@ void Session::sample_thread_proc(function<void (const QString)> error_handler)
 	}
 	highest_segment_id_ = -1;
 	frame_began_ = false;
+	acquisition_received_samples_ = false;
+	window_packet_error_.clear();
 
-	try {
+	if (active_window_mode_) {
+		sample_stream_windows();
+	} else {
+	unsigned completed = 0;
+	series_frame_ = active_capture_count_ > 1;
+	for (unsigned run = 0; run < active_capture_count_ && !stop_requested(); ++run) {
+		if (series_frame_) {
+			{ lock_guard<recursive_mutex> lock(data_mutex_);
+			  capture_outcome_.clear(); capture_error_.clear(); }
+			feed_in_frame_begin();
+		}
+		set_capture_state((device_->session()->trigger() || has_extended_trigger()) ?
+			AwaitingTrigger : Running);
+		capture_series_progress(run + 1, active_capture_count_);
+		if (stop_requested()) break;
+		acquisition_received_samples_ = false;
+		acquisition_end_received_ = false;
 		device_->start();
-	} catch (Error& e) {
-		error_handler(e.what());
-		return;
+		if (stop_requested()) device_->stop();
+		try { device_->run(); }
+		catch (const QString& error) { throw std::runtime_error(error.toStdString()); }
+		if (!window_packet_error_.isEmpty()) {
+			lock_guard<recursive_mutex> lock(data_mutex_);
+			capture_outcome_ = "error"; capture_error_ = window_packet_error_;
+		}
+		if (series_frame_ && !acquisition_end_received_ && !stop_requested()) {
+			lock_guard<recursive_mutex> lock(data_mutex_);
+			capture_outcome_ = "error";
+			capture_error_ = tr("The acquisition ended without an end marker; the capture series was stopped.");
+		}
+		if (series_frame_ && frame_began_) feed_in_frame_end();
+		if (series_frame_) {
+			{ lock_guard<recursive_mutex> lock(data_mutex_);
+			  if (capture_outcome_.isEmpty())
+				  capture_outcome_ = stop_requested() ? "stopped" : "complete"; }
+			record_segment_outcome();
+		}
+		if (active_capture_count_ > 1 && !acquisition_received_samples_ && !stop_requested() &&
+				(capture_outcome().isEmpty() || capture_outcome() == "complete")) {
+			lock_guard<recursive_mutex> lock(data_mutex_);
+			capture_outcome_ = "error";
+			capture_error_ = tr("The acquisition ended without sample data; the capture series was stopped.");
+		}
+		++completed;
+		if (stop_requested() || (!capture_outcome().isEmpty() && capture_outcome() != "complete"))
+			break;
 	}
-
-	set_capture_state(device_->session()->trigger() ?
-		AwaitingTrigger : Running);
-
-	try {
-		device_->run();
-	} catch (Error& e) {
-		error_handler(e.what());
-		set_capture_state(Stopped);
-		return;
-	} catch (QString& e) {
-		error_handler(e);
-		set_capture_state(Stopped);
-		return;
+	series_frame_ = false;
+	if (active_capture_count_ > 1 && completed < active_capture_count_ &&
+			(capture_outcome().isEmpty() || capture_outcome() == "complete")) {
+		lock_guard<recursive_mutex> lock(data_mutex_);
+		capture_outcome_ = "stopped";
 	}
-
+	}
 	set_capture_state(Stopped);
 
 	// Confirm that SR_DF_END was received
@@ -1322,6 +1824,196 @@ void Session::sample_thread_proc(function<void (const QString)> error_handler)
 
 	if (out_of_memory_)
 		error_handler(tr("Out of memory, acquisition stopped."));
+	const QString capture_problem = capture_error();
+	if (!capture_problem.isEmpty())
+		Q_EMIT session_error_raised(tr("Capture incomplete"), capture_problem +
+			tr("\nThe received samples can be saved as a partial capture."));
+}
+catch (const std::exception &error)
+{
+	// Standard exceptions (including allocation/configuration failures) must
+	// not escape std::thread and terminate the entire application.
+	const QString problem = dynamic_cast<const bad_alloc *>(&error) ?
+		tr("Out of memory, acquisition stopped.") : QString::fromUtf8(error.what());
+	try {
+		if (device_)
+			device_->stop();
+	} catch (...) {
+		qWarning() << tr("Failed to stop acquisition after a capture error.");
+	}
+	{
+		lock_guard<recursive_mutex> lock(data_mutex_);
+		capture_outcome_ = "error";
+		capture_error_ = problem;
+		data_saved_ = false;
+	}
+	if (frame_began_) feed_in_frame_end();
+	if (cur_logic_segment_ || !cur_analog_segments_.empty()) record_segment_outcome();
+	series_frame_ = false;
+	set_capture_state(Stopped);
+	error_handler(problem);
+}
+
+bool Session::set_software_trigger(const SoftwareTrigger& config)
+{
+	if (get_capture_state() != Stopped) return false;
+	software_trigger_ = config;
+	stream_windows_changed();
+	return true;
+}
+
+void Session::prepare_stream_windows()
+{
+	const auto device = device_->device();
+	if (!device || !session() || has_extended_trigger())
+		throw std::runtime_error("Stream windows require standard digital trigger conditions.");
+	if (!device_->can_stream_continuously())
+		throw std::runtime_error("This device does not expose continuous acquisition controls for Stream windows.");
+	for (const auto& channel : device->channels())
+		if (channel->enabled() && channel->type() != sigrok::ChannelType::LOGIC)
+			throw std::runtime_error("Stream windows support digital inputs only.");
+	if (device->config_check(ConfigKey::DATA_SOURCE, sigrok::Capability::GET) &&
+		Glib::VariantBase::cast_dynamic<Glib::Variant<Glib::ustring>>(device->config_get(ConfigKey::DATA_SOURCE)).get() != "Stream")
+		throw std::runtime_error("Select Stream mode before enabling software capture windows.");
+	window_rate_ = device_->read_config<uint64_t>(ConfigKey::SAMPLERATE);
+	window_depth_ = device_->read_config<uint64_t>(ConfigKey::LIMIT_SAMPLES);
+	if (!window_depth_) {
+		const auto msec = device_->read_config<uint64_t>(ConfigKey::LIMIT_MSEC);
+		if (msec && window_rate_ > UINT64_MAX / msec)
+			throw std::runtime_error("Stream window duration is too large.");
+		window_depth_ = msec * window_rate_ / 1000;
+	}
+	if (!window_rate_ || window_depth_ < 2 || window_depth_ > std::numeric_limits<size_t>::max() / 8 ||
+		!device->config_check(ConfigKey::LIMIT_SAMPLES, sigrok::Capability::SET))
+		throw std::runtime_error("Stream windows need a finite sample depth of at least two samples and a known sample rate.");
+	const auto percent = window_pretrigger_percent();
+	window_pre_ = std::max<uint64_t>(1, window_depth_ / 100 * percent + window_depth_ % 100 * percent / 100);
+	window_stages_.clear();
+	if (software_trigger_.enabled) {
+		uint64_t enabled = 0;
+		for (const auto& channel : device->channels())
+			if (channel->enabled() && channel->type() == sigrok::ChannelType::LOGIC && channel->index() < 64)
+				enabled |= UINT64_C(1) << channel->index();
+		window_stages_.push_back(compile_software_trigger(software_trigger_, window_rate_, enabled));
+		return;
+	}
+	const auto trigger = session()->trigger();
+	if (!trigger || trigger->stages().empty() || trigger->stages().size() > 64)
+		throw std::runtime_error("Configure a standard digital trigger with one to 64 stages.");
+	for (const auto& stage : trigger->stages()) {
+		data::WindowTriggerStage next;
+		if (stage->matches().empty()) throw std::runtime_error("Empty software trigger stage.");
+		for (const auto& match : stage->matches()) {
+			const auto channel = match->channel();
+			if (!channel->enabled() || channel->type() != sigrok::ChannelType::LOGIC || channel->index() >= 64)
+				throw std::runtime_error("Every software trigger channel must be an enabled digital input below D64.");
+			const auto bit = UINT64_C(1) << channel->index();
+			switch (match->type()->id()) {
+			case SR_TRIGGER_ZERO: next.low |= bit; break;
+			case SR_TRIGGER_ONE: next.high |= bit; break;
+			case SR_TRIGGER_RISING: next.rising |= bit; break;
+			case SR_TRIGGER_FALLING: next.falling |= bit; break;
+			case SR_TRIGGER_EDGE: next.edge |= bit; break;
+			default: throw std::runtime_error("Unsupported software trigger condition.");
+			}
+		}
+		window_stages_.push_back(next);
+	}
+}
+
+void Session::sample_stream_windows()
+{
+	const auto backend = session();
+	const auto trigger = backend->trigger();
+	std::function<void()> restore_limits;
+	const auto restore = [&] {
+		backend->set_trigger(trigger);
+		if (restore_limits) restore_limits();
+	};
+	window_extractor_.reset();
+	window_packet_error_.clear();
+	window_target_stop_ = false;
+	acquisition_end_received_ = false;
+	series_frame_ = false;
+	bool started = false, ran = false;
+	try {
+		backend->set_trigger(nullptr);
+		restore_limits = device_->suspend_capture_limits();
+		capture_series_progress(1, active_capture_count_);
+		if (!stop_requested()) {
+			set_capture_state(AwaitingTrigger);
+			device_->start(); started = true;
+			if (stop_requested()) device_->stop();
+			try { device_->run(); } catch (const QString& error) { throw std::runtime_error(error.toStdString()); }
+			ran = true;
+		}
+		if (!window_packet_error_.isEmpty()) {
+			lock_guard<recursive_mutex> lock(data_mutex_);
+			capture_outcome_ = "error"; capture_error_ = window_packet_error_;
+		} else if (!acquisition_end_received_ && started && !stop_requested()) {
+			lock_guard<recursive_mutex> lock(data_mutex_);
+			capture_outcome_ = "error"; capture_error_ = tr("Continuous source ended without an end marker.");
+		} else {
+			lock_guard<recursive_mutex> lock(data_mutex_);
+			const bool benign = capture_outcome_.isEmpty() || capture_outcome_ == "stopped" || capture_outcome_ == "complete";
+			if (benign) {
+				if (window_target_stop_) capture_outcome_ = "complete";
+				else if (stop_requested()) capture_outcome_ = "stopped";
+				else { capture_outcome_ = "error"; capture_error_ = tr("Continuous input ended before the requested windows were captured."); }
+			}
+		}
+		if (window_extractor_) window_extractor_->finish();
+		window_extractor_.reset();
+		try { restore(); }
+		catch (const std::exception& error) {
+			lock_guard<recursive_mutex> lock(data_mutex_);
+			// Preserve an informative transport failure instead of replacing a
+			// disconnect/timeout with the secondary configuration failure.
+			if (capture_outcome_.isEmpty() || capture_outcome_ == "complete" || capture_outcome_ == "stopped")
+				capture_outcome_ = "error";
+			if (!capture_error_.isEmpty()) capture_error_ += '\n';
+			capture_error_ += tr("Capture settings could not be restored: %1\nUse Connect to Device, Scan, and select the device again before another capture.")
+				.arg(QString::fromUtf8(error.what()));
+		}
+	} catch (...) {
+		const auto failure = std::current_exception();
+		if (started && !ran) {
+			try { device_->stop(); device_->run(); } catch (...) { }
+		}
+		window_extractor_.reset();
+		try { restore(); } catch (const std::exception& error) {
+			qWarning() << "Cannot restore finite stream settings:" << error.what();
+		}
+		std::rethrow_exception(failure);
+	}
+}
+
+void Session::accept_stream_window(data::StreamWindows::Window&& window)
+{
+	const auto outcome = capture_outcome(), error = capture_error();
+	{
+		lock_guard<recursive_mutex> lock(data_mutex_);
+		if (window.complete) { capture_outcome_ = "complete"; capture_error_.clear(); }
+	}
+	feed_in_frame_begin();
+	const auto packet = device_manager_.context()->create_logic_packet(window.bytes.data(), window.bytes.size(),
+		window_extractor_->unit_size());
+	// Payload unitsize is stored separately from sample positions.
+	feed_in_logic_payload(std::dynamic_pointer_cast<sigrok::Logic>(packet->payload()));
+	set_segment_origin(window.origin);
+	restore_segment_triggers({util::Timestamp(window.trigger_offset) / window_rate_});
+	feed_in_frame_end();
+	{
+		lock_guard<recursive_mutex> lock(data_mutex_);
+		capture_outcome_ = outcome; capture_error_ = error;
+	}
+	if (window_extractor_->target_reached()) {
+		window_target_stop_ = true;
+		device_->stop();
+	} else if (window.complete && !stop_requested()) {
+		capture_series_progress(window_extractor_->completed() + 1, active_capture_count_);
+		set_capture_state(AwaitingTrigger);
+	}
 }
 
 void Session::free_unused_memory()
@@ -1439,8 +2131,29 @@ void Session::feed_in_meta(shared_ptr<Meta> meta)
 	for (auto& entry : meta->config()) {
 		switch (entry.first->id()) {
 		case SR_CONF_SAMPLERATE:
+			if (active_window_mode_ && g_variant_get_uint64(entry.second.gobj()) != window_rate_)
+				throw std::runtime_error("Source sample rate changed during continuous capture windows.");
 			cur_samplerate_ = g_variant_get_uint64(entry.second.gobj());
 			break;
+#ifdef HAVE_SR_CONF_CAPTURE_STATUS
+		case SR_CONF_CAPTURE_STATUS: {
+			const QString outcome = QString::fromUtf8(g_variant_get_string(entry.second.gobj(), nullptr));
+			{
+				lock_guard<recursive_mutex> lock(data_mutex_);
+				capture_outcome_ = outcome;
+			}
+			if (outcome == "disconnected" && dynamic_pointer_cast<devices::HardwareDevice>(device_))
+				device_reconnect_needed_ = true;
+			break;
+		}
+#endif
+#ifdef HAVE_SR_CONF_CAPTURE_ERROR
+		case SR_CONF_CAPTURE_ERROR: {
+			lock_guard<recursive_mutex> lock(data_mutex_);
+			capture_error_ = QString::fromUtf8(g_variant_get_string(entry.second.gobj(), nullptr));
+			break;
+		}
+#endif
 		default:
 			qDebug() << "Received meta data key" << entry.first->id() << ", ignoring.";
 			break;
@@ -1470,6 +2183,9 @@ void Session::feed_in_trigger()
 		}
 	}
 
+	if (frame_began_ && !cur_logic_segment_ && cur_analog_segments_.empty())
+		sample_count = 0;
+
 	uint32_t segment_id = 0;  // Default segment when no frames are used
 
 	// If a frame began, we'd ideally be able to use the highest segment ID for
@@ -1493,12 +2209,14 @@ void Session::feed_in_trigger()
 void Session::feed_in_frame_begin()
 {
 	frame_began_ = true;
+	acquisition_received_samples_ = false;
 }
 
 void Session::feed_in_frame_end()
 {
 	if (!frame_began_)
 		return;
+	const bool has_data = cur_logic_segment_ || !cur_analog_segments_.empty();
 
 	{
 		lock_guard<recursive_mutex> lock(data_mutex_);
@@ -1516,11 +2234,26 @@ void Session::feed_in_frame_end()
 	}
 
 	frame_began_ = false;
-
-	signal_segment_completed();
+	if (has_data) {
+		record_segment_outcome();
+		signal_segment_completed();
+	}
 }
 
 void Session::feed_in_logic(shared_ptr<sigrok::Logic> logic)
+{
+	if (!active_window_mode_) { feed_in_logic_payload(std::move(logic)); return; }
+	if (!logic->data_length() || !window_packet_error_.isEmpty()) return;
+	if (!window_extractor_)
+		window_extractor_.reset(new data::StreamWindows(logic->unit_size(), window_depth_, window_pre_, active_capture_count_,
+			window_stages_, [this](data::StreamWindows::Window&& w) { accept_stream_window(std::move(w)); },
+			[this] { return stop_requested(); }));
+	if (logic->unit_size() != window_extractor_->unit_size())
+		throw std::runtime_error("Source logic width changed during continuous capture windows.");
+	window_extractor_->feed(logic->data_pointer(), logic->data_length());
+}
+
+void Session::feed_in_logic_payload(shared_ptr<sigrok::Logic> logic)
 {
 	if (logic->data_length() == 0) {
 		qDebug() << "WARNING: Received logic packet with 0 samples.";
@@ -1560,6 +2293,7 @@ void Session::feed_in_logic(shared_ptr<sigrok::Logic> logic)
 	}
 
 	cur_logic_segment_->append_payload(logic);
+	acquisition_received_samples_ = true;
 
 	segment_sample_count_[highest_segment_id_] =
 		max(segment_sample_count_[highest_segment_id_], cur_logic_segment_->get_sample_count());
@@ -1569,6 +2303,7 @@ void Session::feed_in_logic(shared_ptr<sigrok::Logic> logic)
 
 void Session::feed_in_analog(shared_ptr<sigrok::Analog> analog)
 {
+	acquisition_received_samples_ = analog->num_samples() > 0 || acquisition_received_samples_;
 	if (analog->num_samples() == 0) {
 		qDebug() << "WARNING: Received analog packet with 0 samples.";
 		return;
@@ -1652,6 +2387,7 @@ void Session::data_feed_in(shared_ptr<sigrok::Device> device,
 	assert(device == device_->device());
 	assert(packet);
 
+	try {
 	switch (packet->type()->id()) {
 	case SR_DF_HEADER:
 		feed_in_header();
@@ -1662,36 +2398,30 @@ void Session::data_feed_in(shared_ptr<sigrok::Device> device,
 		break;
 
 	case SR_DF_TRIGGER:
-		feed_in_trigger();
+		if (!active_window_mode_) feed_in_trigger();
 		break;
 
 	case SR_DF_LOGIC:
-		try {
-			feed_in_logic(dynamic_pointer_cast<Logic>(packet->payload()));
-		} catch (bad_alloc&) {
-			out_of_memory_ = true;
-			device_->stop();
-		}
+		feed_in_logic(dynamic_pointer_cast<Logic>(packet->payload()));
 		break;
 
 	case SR_DF_ANALOG:
-		try {
-			feed_in_analog(dynamic_pointer_cast<Analog>(packet->payload()));
-		} catch (bad_alloc&) {
-			out_of_memory_ = true;
-			device_->stop();
-		}
+		if (active_window_mode_) throw std::runtime_error("Analog packets cannot be used for digital Stream windows.");
+		feed_in_analog(dynamic_pointer_cast<Analog>(packet->payload()));
 		break;
 
 	case SR_DF_FRAME_BEGIN:
-		feed_in_frame_begin();
+		if (!active_window_mode_) feed_in_frame_begin();
 		break;
 
 	case SR_DF_FRAME_END:
-		feed_in_frame_end();
+		if (!active_window_mode_) feed_in_frame_end();
 		break;
 
 	case SR_DF_END:
+		acquisition_end_received_ = true;
+		if (active_window_mode_) break;
+		if (series_frame_) { feed_in_frame_end(); break; }
 		// Strictly speaking, this is performed when a frame end marker was
 		// received, so there's no point doing this again. However, not all
 		// devices use frames, and for those devices, we need to do it here.
@@ -1713,6 +2443,22 @@ void Session::data_feed_in(shared_ptr<sigrok::Device> device,
 
 	default:
 		break;
+	}
+	} catch (...) {
+		// Never unwind through libsigrok's noexcept C datafeed trampoline.
+		QString problem;
+		try { throw; }
+		catch (const bad_alloc&) { out_of_memory_ = true; problem = tr("Out of memory while receiving sample data."); }
+		catch (const std::exception& error) { problem = QString::fromUtf8(error.what()); }
+		catch (const QString& error) { problem = error; }
+		catch (...) { problem = tr("Unexpected sample processing failure."); }
+		{
+			lock_guard<recursive_mutex> lock(data_mutex_);
+			window_packet_error_ = problem;
+			capture_outcome_ = "error";
+			capture_error_ = problem;
+		}
+		try { device_->stop(); } catch (...) { qWarning() << "Failed to stop after a datafeed error."; }
 	}
 }
 

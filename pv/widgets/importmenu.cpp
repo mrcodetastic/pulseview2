@@ -63,11 +63,28 @@ ImportMenu::ImportMenu(QWidget *parent, shared_ptr<Context> context,
 	const map<string, shared_ptr<InputFormat> > formats =
 		context->input_formats();
 
+	vector<shared_ptr<InputFormat>> sorted_formats;
+	sorted_formats.reserve(formats.size());
 	for (const pair<const string, shared_ptr<InputFormat> > &f : formats) {
+		if (f.first == "null")
+			continue;
 		assert(f.second);
-		QAction *const action =	addAction(tr("Import %1...")
-			.arg(QString::fromStdString(f.second->description())));
-		action->setData(QVariant::fromValue((void*)f.second.get()));
+		sorted_formats.push_back(f.second);
+	}
+
+	std::sort(sorted_formats.begin(), sorted_formats.end(),
+		[](const shared_ptr<InputFormat> &a, const shared_ptr<InputFormat> &b) {
+			return QString::fromStdString(a->description()).compare(
+				QString::fromStdString(b->description()), Qt::CaseInsensitive) < 0;
+		});
+
+	const bool standalone_submenu = open_actions.empty();
+	for (const shared_ptr<InputFormat> &fmt : sorted_formats) {
+		const QString desc = QString::fromStdString(fmt->description());
+		const QString label = standalone_submenu ?
+			tr("%1...").arg(desc) : tr("Import %1...").arg(desc);
+		QAction *const action = addAction(label);
+		action->setData(QVariant::fromValue((void*)fmt.get()));
 		mapper_.setMapping(action, action);
 		connect(action, SIGNAL(triggered()), &mapper_, SLOT(map()));
 	}

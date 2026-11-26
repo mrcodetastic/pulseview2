@@ -43,6 +43,8 @@ class Settings : public QDialog
 public:
 	Settings(DeviceManager &device_manager, QWidget *parent = nullptr);
 
+	void select_about_page();
+
 	void create_pages();
 	QCheckBox *create_checkbox(const QString& key, const char* slot) const;
 	QPlainTextEdit *create_log_view() const;
@@ -100,6 +102,7 @@ private:
 #endif
 
 	QPlainTextEdit *log_view_;
+	int about_page_index_;
 };
 
 } // namespace dialogs

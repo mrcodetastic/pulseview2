@@ -39,6 +39,9 @@ using std::string;
 
 struct srd_decoder;
 
+class QAction;
+class QLabel;
+class QMenu;
 class QVBoxLayout;
 
 namespace pv {
@@ -77,7 +80,7 @@ public:
 
 	~MainWindow();
 
-	static void show_session_error(const QString text, const QString info_text);
+	static void show_session_error(const QString text, const QString info_text, QWidget *parent = nullptr);
 
 	shared_ptr<views::ViewBase> get_active_view() const;
 
@@ -102,7 +105,14 @@ public:
 
 private:
 	void setup_ui();
+	void setup_menu_bar();
+	void setup_status_bar();
 	void update_acq_button(Session *session);
+	void update_menu_state();
+	void update_status_bar(Session *session);
+
+	shared_ptr<Session> active_session() const;
+	shared_ptr<toolbars::MainBar> active_main_bar() const;
 
 	void save_ui_settings();
 	void restore_ui_settings();
@@ -120,16 +130,20 @@ Q_SIGNALS:
 
 public Q_SLOTS:
 	void on_run_stop_clicked();
+	void on_run_stop_for_session(Session *session);
 	void on_session_error_raised(const QString text, const QString info_text);
 
 private Q_SLOTS:
 	void on_add_view(ViewType type, Session *session);
+	void on_remove_view(shared_ptr<views::ViewBase> view);
 
 	void on_focus_changed();
 	void on_focused_session_changed(shared_ptr<Session> session);
 
 	void on_new_session_clicked();
 	void on_settings_clicked();
+	void on_help_shortcuts_triggered();
+	void on_help_about_triggered();
 
 	void on_session_name_changed();
 	void on_session_device_changed();
@@ -162,21 +176,49 @@ private:
 
 	map< shared_ptr<Session>, QMainWindow*> session_windows_;
 
-	QWidget *static_tab_widget_;
-	QToolButton *new_session_button_, *run_stop_button_, *settings_button_;
 	QTabWidget session_selector_;
 
-	QIcon icon_red_;
-	QIcon icon_green_;
-	QIcon icon_grey_;
+	QIcon icon_play_;
+	QIcon icon_stop_;
+	QIcon icon_waiting_;
+	QIcon icon_reload_;
 
-	QShortcut *view_sticky_scrolling_shortcut_;
-	QShortcut *view_show_sampling_points_shortcut_;
-	QShortcut *view_show_analog_minor_grid_shortcut_;
-	QShortcut *view_colored_bg_shortcut_;
-	QShortcut *run_stop_shortcut_;
-	QShortcut *close_application_shortcut_;
-	QShortcut *close_current_tab_shortcut_;
+	// Menu bar actions synced to active session/view
+	QAction *menu_action_open_;
+	QAction *menu_action_save_;
+	QAction *menu_action_save_as_;
+	QAction *menu_action_save_selection_as_;
+	QAction *menu_action_restore_setup_;
+	QAction *menu_action_save_setup_;
+	QMenu *menu_import_;
+	QMenu *menu_export_;
+
+	QAction *menu_action_run_stop_;
+	QAction *menu_action_connect_;
+	QAction *menu_action_reconnect_;
+	QAction *menu_action_configure_device_;
+	QAction *menu_action_configure_channels_;
+	QAction *menu_action_triggers_;
+
+	QMenu *menu_new_view_;
+	QAction *menu_action_zoom_in_;
+	QAction *menu_action_zoom_out_;
+	QAction *menu_action_zoom_fit_;
+	QAction *menu_action_show_cursors_;
+	QAction *menu_action_compress_idle_;
+	QAction *menu_action_sticky_scrolling_;
+	QAction *menu_action_sampling_points_;
+	QAction *menu_action_analog_minor_grid_;
+	QAction *menu_action_colored_bg_;
+
+#ifdef ENABLE_DECODE
+	QAction *menu_action_add_decoder_;
+#endif
+	QAction *menu_action_add_math_;
+
+	// Status bar indicators
+	QLabel *status_device_label_;
+	QLabel *status_state_label_;
 };
 
 } // namespace pv

@@ -573,43 +573,50 @@ void LogicSegment::get_subsampled_edges(
 }
 
 void LogicSegment::get_surrounding_edges(vector<EdgePair> &dest,
-	uint64_t origin_sample, float min_length, int sig_index)
+	uint64_t origin_sample, float min_length, int sig_index,
+	uint64_t search_radius)
 {
-	if (origin_sample >= sample_count_)
+	const uint64_t sample_count = sample_count_.load();
+	if (origin_sample >= sample_count)
 		return;
 
-	// Put the edges vector on the heap, it can become quite big until we can
-	// use a get_subsampled_edges() implementation that searches backwards
-	vector<EdgePair>* edges = new vector<EdgePair>;
+	// Only scan a limited window around the cursor if a search radius is
+	// given. Scanning from sample 0 on every mouse move is very expensive
+	// on large captures; edges outside the radius would not be snapped to
+	// anyway (see View::get_nearest_level_change()).
+	const uint64_t start = (search_radius > 0) ?
+		((origin_sample > search_radius) ?
+			(origin_sample - search_radius) : 0) : 0;
+	const uint64_t end = (search_radius > 0) ?
+		min(origin_sample + search_radius, sample_count) : sample_count;
+
+	// The edge vector stays small because of the limited search window,
+	// so it can live on the stack instead of being heap-allocated on
+	// every mouse move.
+	vector<EdgePair> edges;
 
 	// Get all edges to the left of origin_sample
-	get_subsampled_edges(*edges, 0, origin_sample, min_length, sig_index, false);
+	get_subsampled_edges(edges, start, origin_sample, min_length, sig_index, false);
 
 	// If we don't specify "first only", the first and last edge are the states
-	// at samples 0 and origin_sample. If only those exist, there are no edges
-	if (edges->size() == 2) {
-		delete edges;
+	// at samples start and origin_sample. If only those exist, there are no edges
+	if (edges.size() == 2)
 		return;
-	}
 
 	// Dismiss the entry for origin_sample so that back() gives us the
 	// real last entry
-	edges->pop_back();
-	dest.push_back(edges->back());
-	edges->clear();
+	edges.pop_back();
+	dest.push_back(edges.back());
+	edges.clear();
 
 	// Get first edge to the right of origin_sample
-	get_subsampled_edges(*edges, origin_sample, sample_count_, min_length, sig_index, true);
+	get_subsampled_edges(edges, origin_sample, end, min_length, sig_index, true);
 
 	// "first only" is specified, so nothing needs to be dismissed
-	if (edges->size() == 0) {
-		delete edges;
+	if (edges.empty())
 		return;
-	}
 
-	dest.push_back(edges->front());
-
-	delete edges;
+	dest.push_back(edges.front());
 }
 
 void LogicSegment::reallocate_mipmap_level(MipMapLevel &m)

@@ -31,11 +31,24 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDebug>
+#include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QHBoxLayout>
+#include <QHeaderView>
+#include <QLabel>
+#include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QSettings>
 #include <QShortcut>
+#include <QSignalBlocker>
+#include <QStatusBar>
+#include <QTableWidget>
+#include <QUrl>
+#include <QVBoxLayout>
 #include <QWidget>
 
 #include "mainwindow.hpp"
@@ -45,10 +58,13 @@
 #include "devices/hardwaredevice.hpp"
 #include "dialogs/settings.hpp"
 #include "globalsettings.hpp"
+#include "iconhelper.hpp"
 #include "toolbars/mainbar.hpp"
 #include "util.hpp"
 #include "views/trace/view.hpp"
 #include "views/trace/standardbar.hpp"
+#include "widgets/exportmenu.hpp"
+#include "widgets/importmenu.hpp"
 
 #ifdef ENABLE_DECODE
 #include "subwindows/decoder_selector/subwindow.hpp"
@@ -67,15 +83,46 @@ namespace pv {
 
 using toolbars::MainBar;
 
-const QString MainWindow::WindowTitle = tr("PulseView");
+const QString MainWindow::WindowTitle = tr("PulseView2");
 
 MainWindow::MainWindow(DeviceManager &device_manager, QWidget *parent) :
 	QMainWindow(parent),
 	device_manager_(device_manager),
 	session_selector_(this),
-	icon_red_(":/icons/status-red.svg"),
-	icon_green_(":/icons/status-green.svg"),
-	icon_grey_(":/icons/status-grey.svg")
+	icon_play_(pv::themed_icon(":/icons/ui/play.svg", QColor("#16a34a"))),
+	icon_stop_(pv::themed_icon(":/icons/ui/stop.svg", QColor("#dc2626"))),
+	icon_waiting_(pv::themed_icon(":/icons/ui/stop.svg", QColor("#d97706"))),
+	icon_reload_(pv::themed_icon(":/icons/ui/reload.svg", QColor("#2563eb"))),
+	menu_action_open_(nullptr),
+	menu_action_save_(nullptr),
+	menu_action_save_as_(nullptr),
+	menu_action_save_selection_as_(nullptr),
+	menu_action_restore_setup_(nullptr),
+	menu_action_save_setup_(nullptr),
+	menu_import_(nullptr),
+	menu_export_(nullptr),
+	menu_action_run_stop_(nullptr),
+	menu_action_connect_(nullptr),
+	menu_action_reconnect_(nullptr),
+	menu_action_configure_device_(nullptr),
+	menu_action_configure_channels_(nullptr),
+	menu_action_triggers_(nullptr),
+	menu_new_view_(nullptr),
+	menu_action_zoom_in_(nullptr),
+	menu_action_zoom_out_(nullptr),
+	menu_action_zoom_fit_(nullptr),
+	menu_action_show_cursors_(nullptr),
+	menu_action_compress_idle_(nullptr),
+	menu_action_sticky_scrolling_(nullptr),
+	menu_action_sampling_points_(nullptr),
+	menu_action_analog_minor_grid_(nullptr),
+	menu_action_colored_bg_(nullptr),
+#ifdef ENABLE_DECODE
+	menu_action_add_decoder_(nullptr),
+#endif
+	menu_action_add_math_(nullptr),
+	status_device_label_(nullptr),
+	status_state_label_(nullptr)
 {
 	setup_ui();
 	restore_ui_settings();
@@ -94,12 +141,13 @@ MainWindow::~MainWindow()
 	sub_windows_.clear();
 }
 
-void MainWindow::show_session_error(const QString text, const QString info_text)
+void MainWindow::show_session_error(const QString text, const QString info_text, QWidget *parent)
 {
 	// TODO Emulate noquote()
 	qDebug() << "Notifying user of session error: " << text << "; " << info_text;
 
-	QMessageBox msg;
+	QMessageBox msg(parent ? parent : QApplication::activeWindow());
+	msg.setWindowTitle(text);
 	msg.setText(text + "\n\n" + info_text);
 	msg.setStandardButtons(QMessageBox::Ok);
 	msg.setIcon(QMessageBox::Warning);
@@ -206,12 +254,21 @@ shared_ptr<views::ViewBase> MainWindow::add_view(views::ViewType type,
 			/* Initial view, create the main bar */
 			main_bar = make_shared<MainBar>(session, this, tv);
 			dock_main->addToolBar(main_bar.get());
+			dock_main->addToolBarBreak();
+			dock_main->addToolBar(main_bar->view_toolbar());
 			session.set_main_bar(main_bar);
 
 			connect(main_bar.get(), SIGNAL(new_view(Session*, int)),
 				this, SLOT(on_new_view(Session*, int)));
 			connect(main_bar.get(), SIGNAL(show_decoder_selector(Session*)),
 				this, SLOT(on_show_decoder_selector(Session*)));
+			connect(main_bar.get(), SIGNAL(run_stop_requested(Session*)),
+				this, SLOT(on_run_stop_for_session(Session*)));
+			connect(main_bar.get(), &views::trace::StandardBar::idle_status_changed,
+				this, [this](const QString &status) {
+					if (!status.isEmpty())
+						statusBar()->showMessage(status, 5000);
+				});
 
 			main_bar->action_view_show_cursors()->setChecked(tv->cursors_shown());
 
@@ -340,12 +397,18 @@ shared_ptr<Session> MainWindow::add_session()
 
 	connect(session.get(), SIGNAL(add_view(ViewType, Session*)),
 		this, SLOT(on_add_view(ViewType, Session*)));
+	connect(session.get(), SIGNAL(remove_view(shared_ptr<views::ViewBase>)),
+		this, SLOT(on_remove_view(shared_ptr<views::ViewBase>)));
 	connect(session.get(), SIGNAL(name_changed()),
 		this, SLOT(on_session_name_changed()));
 	connect(session.get(), SIGNAL(device_changed()),
 		this, SLOT(on_session_device_changed()));
 	connect(session.get(), SIGNAL(capture_state_changed(int)),
 		this, SLOT(on_session_capture_state_changed(int)));
+	connect(session.get(), &Session::signals_changed, this, [this, s = session.get()] {
+		if (s == last_focused_session_.get())
+			update_status_bar(s);
+	});
 
 	sessions_.push_back(session);
 
@@ -360,15 +423,13 @@ shared_ptr<Session> MainWindow::add_session()
 	window->setDockNestingEnabled(true);
 
 	add_view(views::ViewTypeTrace, *session);
+	update_acq_button(session.get());
 
 	return session;
 }
 
 void MainWindow::remove_session(shared_ptr<Session> session)
 {
-	// Determine the height of the button before it collapses
-	int h = new_session_button_->height();
-
 	// Stop capture while the session still exists so that the UI can be
 	// updated in case we're currently running. If so, this will schedule a
 	// call to our on_capture_state_changed() slot for the next run of the
@@ -394,19 +455,9 @@ void MainWindow::remove_session(shared_ptr<Session> session)
 		return s == session; });
 
 	if (sessions_.empty()) {
-		// When there are no more tabs, the height of the QTabWidget
-		// drops to zero. We must prevent this to keep the static
-		// widgets visible
-		for (QWidget *w : static_tab_widget_->findChildren<QWidget*>())  // clazy:exclude=range-loop
-			w->setMinimumHeight(h);
-
-		int margin = static_tab_widget_->layout()->contentsMargins().bottom();
-		static_tab_widget_->setMinimumHeight(h + 2 * margin);
-		session_selector_.setMinimumHeight(h + 2 * margin);
-
-		// Update the window title if there is no view left to
-		// generate focus change events
+		// Update the window title and menus if there is no view left
 		setWindowTitle(WindowTitle);
+		update_acq_button(nullptr);
 	}
 }
 
@@ -499,103 +550,538 @@ void MainWindow::setup_ui()
 	icon.addFile(QString(":/icons/pulseview.png"));
 	setWindowIcon(icon);
 
-	// Set up keyboard shortcuts that affect all views at once
-	view_sticky_scrolling_shortcut_ = new QShortcut(QKeySequence(Qt::Key_S), this, SLOT(on_view_sticky_scrolling_shortcut()));
-	view_sticky_scrolling_shortcut_->setAutoRepeat(false);
-
-	view_show_sampling_points_shortcut_ = new QShortcut(QKeySequence(Qt::Key_Period), this, SLOT(on_view_show_sampling_points_shortcut()));
-	view_show_sampling_points_shortcut_->setAutoRepeat(false);
-
-	view_show_analog_minor_grid_shortcut_ = new QShortcut(QKeySequence(Qt::Key_G), this, SLOT(on_view_show_analog_minor_grid_shortcut()));
-	view_show_analog_minor_grid_shortcut_->setAutoRepeat(false);
-
-	view_colored_bg_shortcut_ = new QShortcut(QKeySequence(Qt::Key_B), this, SLOT(on_view_colored_bg_shortcut()));
-	view_colored_bg_shortcut_->setAutoRepeat(false);
-
-	// Set up the tab area
-	new_session_button_ = new QToolButton();
-	new_session_button_->setIcon(QIcon::fromTheme("document-new",
-		QIcon(":/icons/document-new.png")));
-	new_session_button_->setToolTip(tr("Create New Session"));
-	new_session_button_->setAutoRaise(true);
-
-	run_stop_button_ = new QToolButton();
-	run_stop_button_->setAutoRaise(true);
-	run_stop_button_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-	run_stop_button_->setToolTip(tr("Start/Stop Acquisition"));
-
-	run_stop_shortcut_ = new QShortcut(QKeySequence(Qt::Key_Space), run_stop_button_, SLOT(click()));
-	run_stop_shortcut_->setAutoRepeat(false);
-
-	settings_button_ = new QToolButton();
-	settings_button_->setIcon(QIcon::fromTheme("preferences-system",
-		QIcon(":/icons/preferences-system.png")));
-	settings_button_->setToolTip(tr("Settings"));
-	settings_button_->setAutoRaise(true);
-
-	QFrame *separator1 = new QFrame();
-	separator1->setFrameStyle(QFrame::VLine | QFrame::Raised);
-	QFrame *separator2 = new QFrame();
-	separator2->setFrameStyle(QFrame::VLine | QFrame::Raised);
-
-	QHBoxLayout* layout = new QHBoxLayout();
-	layout->setContentsMargins(2, 2, 2, 2);
-	layout->addWidget(new_session_button_);
-	layout->addWidget(separator1);
-	layout->addWidget(run_stop_button_);
-	layout->addWidget(separator2);
-	layout->addWidget(settings_button_);
-
-	static_tab_widget_ = new QWidget();
-	static_tab_widget_->setLayout(layout);
-
-	session_selector_.setCornerWidget(static_tab_widget_, Qt::TopLeftCorner);
 	session_selector_.setTabsClosable(true);
-
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-	close_application_shortcut_ = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q), this, SLOT(close()));
-	close_current_tab_shortcut_ = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_W), this, SLOT(on_close_current_tab()));
-#else
-	close_application_shortcut_ = new QShortcut(QKeySequence(Qt::CTRL + Qt::Key_Q), this, SLOT(close()));
-	close_current_tab_shortcut_ = new QShortcut(QKeySequence(Qt::CTRL + Qt::Key_W), this, SLOT(on_close_current_tab()));
-#endif
-	close_application_shortcut_->setAutoRepeat(false);
-
-	connect(new_session_button_, SIGNAL(clicked(bool)),
-		this, SLOT(on_new_session_clicked()));
-	connect(run_stop_button_, SIGNAL(clicked(bool)),
-		this, SLOT(on_run_stop_clicked()));
-	connect(settings_button_, SIGNAL(clicked(bool)),
-		this, SLOT(on_settings_clicked()));
+	session_selector_.setDocumentMode(true);
 
 	connect(&session_selector_, SIGNAL(tabCloseRequested(int)),
 		this, SLOT(on_tab_close_requested(int)));
 	connect(&session_selector_, SIGNAL(currentChanged(int)),
 		this, SLOT(on_tab_changed(int)));
 
-
 	connect(static_cast<QApplication *>(QCoreApplication::instance()),
 		SIGNAL(focusChanged(QWidget*, QWidget*)),
 		this, SLOT(on_focus_changed()));
+
+	setup_menu_bar();
+	setup_status_bar();
+	update_menu_state();
+}
+
+void MainWindow::setup_menu_bar()
+{
+	QMenuBar *const bar = menuBar();
+
+	// Helper for session-scoped shortcuts: display shortcut hint in menu without
+	// conflicting with MainBar/StandardBar's WidgetWithChildrenShortcut actions.
+	const auto set_menu_hint_shortcut = [](QAction *action, const QKeySequence &seq) {
+		action->setShortcut(seq);
+		action->setShortcutContext(Qt::WidgetShortcut);
+	};
+
+	// --- File Menu ---
+	QMenu *const file_menu = bar->addMenu(tr("&File"));
+
+	QAction *const act_new_session = file_menu->addAction(
+		QIcon::fromTheme("document-new", QIcon(":/icons/document-new.png")), tr("&New Session"));
+	act_new_session->setShortcut(QKeySequence::New);
+	act_new_session->setStatusTip(tr("Open a new capture session tab"));
+	connect(act_new_session, &QAction::triggered, this, &MainWindow::on_new_session_clicked);
+
+	menu_action_open_ = file_menu->addAction(
+		QIcon::fromTheme("document-open", QIcon(":/icons/document-open.png")), tr("&Open Capture..."));
+	set_menu_hint_shortcut(menu_action_open_, QKeySequence::Open);
+	menu_action_open_->setStatusTip(tr("Open a saved PulseView / sigrok session file (.sr)"));
+	connect(menu_action_open_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->action_open()->trigger();
+	});
+
+	file_menu->addSeparator();
+
+	menu_action_save_ = file_menu->addAction(
+		QIcon::fromTheme("document-save-as", QIcon(":/icons/document-save-as.png")), tr("&Save"));
+	set_menu_hint_shortcut(menu_action_save_, QKeySequence::Save);
+	menu_action_save_->setStatusTip(tr("Save the current capture as a .sr file"));
+	connect(menu_action_save_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->action_save()->trigger();
+	});
+
+	menu_action_save_as_ = file_menu->addAction(
+		QIcon::fromTheme("document-save-as", QIcon(":/icons/document-save-as.png")), tr("Save &As..."));
+	menu_action_save_as_->setStatusTip(tr("Save the current capture to a new .sr file"));
+	connect(menu_action_save_as_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->action_save_as()->trigger();
+	});
+
+	menu_action_save_selection_as_ = file_menu->addAction(
+		QIcon::fromTheme("document-save-as", QIcon(":/icons/document-save-as.png")), tr("Save Selected &Range As..."));
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+	set_menu_hint_shortcut(menu_action_save_selection_as_, QKeySequence(Qt::CTRL | Qt::Key_R));
+#else
+	set_menu_hint_shortcut(menu_action_save_selection_as_, QKeySequence(Qt::CTRL + Qt::Key_R));
+#endif
+	menu_action_save_selection_as_->setStatusTip(tr("Save only the range between measurement cursors"));
+	connect(menu_action_save_selection_as_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->action_save_selection_as()->trigger();
+	});
+
+	file_menu->addSeparator();
+
+	widgets::ImportMenu *const import_submenu = new widgets::ImportMenu(
+		file_menu, device_manager_.context());
+	import_submenu->setTitle(tr("&Import"));
+	import_submenu->setIcon(QIcon::fromTheme("document-open", QIcon(":/icons/document-open.png")));
+	connect(import_submenu, &widgets::ImportMenu::format_selected, this,
+		[this](shared_ptr<sigrok::InputFormat> format) {
+			if (auto mb = active_main_bar())
+				mb->import_file(format);
+		});
+	menu_import_ = import_submenu;
+	file_menu->addMenu(menu_import_);
+
+	widgets::ExportMenu *const export_submenu = new widgets::ExportMenu(
+		file_menu, device_manager_.context());
+	export_submenu->setTitle(tr("&Export"));
+	export_submenu->setIcon(QIcon::fromTheme("document-save-as", QIcon(":/icons/document-save-as.png")));
+	connect(export_submenu, &widgets::ExportMenu::format_selected, this,
+		[this](shared_ptr<sigrok::OutputFormat> format) {
+			if (auto mb = active_main_bar())
+				mb->export_file(format);
+		});
+	menu_export_ = export_submenu;
+	file_menu->addMenu(menu_export_);
+
+	file_menu->addSeparator();
+
+	QMenu *const setup_menu = file_menu->addMenu(tr("Session Setu&p"));
+	menu_action_restore_setup_ = setup_menu->addAction(tr("&Restore Session Setup..."));
+	menu_action_restore_setup_->setStatusTip(tr("Load channel names, decoders, and layout from a .pvs file"));
+	connect(menu_action_restore_setup_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->action_restore_setup()->trigger();
+	});
+
+	menu_action_save_setup_ = setup_menu->addAction(tr("&Save Session Setup..."));
+	menu_action_save_setup_->setStatusTip(tr("Save channel names, decoders, and layout to a .pvs file"));
+	connect(menu_action_save_setup_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->action_save_setup()->trigger();
+	});
+
+	file_menu->addSeparator();
+
+	QAction *const act_close_tab = file_menu->addAction(tr("&Close Session"));
+	act_close_tab->setShortcut(QKeySequence::Close);
+	act_close_tab->setStatusTip(tr("Close the current session tab"));
+	connect(act_close_tab, &QAction::triggered, this, &MainWindow::on_close_current_tab);
+
+	QAction *const act_quit = file_menu->addAction(
+		QIcon::fromTheme("application-exit", QIcon(":/icons/application-exit.png")), tr("&Quit"));
+	act_quit->setShortcut(QKeySequence::Quit);
+	act_quit->setMenuRole(QAction::QuitRole);
+	act_quit->setStatusTip(tr("Exit PulseView2"));
+	connect(act_quit, &QAction::triggered, this, &MainWindow::close);
+
+	// --- Capture Menu ---
+	QMenu *const capture_menu = bar->addMenu(tr("&Capture"));
+
+	menu_action_run_stop_ = capture_menu->addAction(icon_play_, tr("&Run"));
+	set_menu_hint_shortcut(menu_action_run_stop_, QKeySequence(Qt::Key_Space));
+	menu_action_run_stop_->setStatusTip(tr("Start or stop data capture"));
+	connect(menu_action_run_stop_, &QAction::triggered, this, &MainWindow::on_run_stop_clicked);
+
+	capture_menu->addSeparator();
+
+	menu_action_connect_ = capture_menu->addAction(tr("&Connect to Device..."));
+	menu_action_connect_->setStatusTip(tr("Scan for and connect to a hardware analyzer or oscilloscope"));
+	connect(menu_action_connect_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->action_connect()->trigger();
+	});
+
+	menu_action_reconnect_ = capture_menu->addAction(icon_reload_, tr("&Reconnect Last Device"));
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+	set_menu_hint_shortcut(menu_action_reconnect_, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
+#else
+	set_menu_hint_shortcut(menu_action_reconnect_, QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_R));
+#endif
+	menu_action_reconnect_->setStatusTip(tr("Rescan and reconnect to the last used hardware device"));
+	connect(menu_action_reconnect_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar()) {
+			if (mb->reconnect_with_retry_ui()) {
+				if (auto s = active_session())
+					statusBar()->showMessage(
+						tr("Reconnected to %1").arg(s->reconnect_target_name()), 5000);
+			}
+			update_menu_state();
+		}
+	});
+
+	menu_action_configure_device_ = capture_menu->addAction(
+		QIcon::fromTheme("preferences-system", QIcon(":/icons/preferences-system.png")), tr("Device &Configuration..."));
+	menu_action_configure_device_->setStatusTip(tr("Configure hardware-specific device options"));
+	connect(menu_action_configure_device_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->trigger_configure_device();
+	});
+
+	menu_action_configure_channels_ = capture_menu->addAction(
+		QIcon(":/icons/channels.svg"), tr("C&hannels..."));
+	menu_action_configure_channels_->setStatusTip(tr("Enable or disable individual channels"));
+	connect(menu_action_configure_channels_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->trigger_configure_channels();
+	});
+
+	menu_action_triggers_ = capture_menu->addAction(
+		QIcon(":/icons/trigger-rising.svg"), tr("&Triggers..."));
+	menu_action_triggers_->setStatusTip(tr("Configure hardware trigger stages and conditions"));
+	connect(menu_action_triggers_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->trigger_edit_trigger();
+	});
+
+	// --- View Menu ---
+	QMenu *const view_menu = bar->addMenu(tr("&View"));
+	connect(view_menu, &QMenu::aboutToShow, this, &MainWindow::update_menu_state);
+
+	menu_new_view_ = view_menu->addMenu(
+		QIcon::fromTheme("window-new", QIcon(":/icons/window-new.png")), tr("New &View"));
+	for (int i = 0; i < views::ViewTypeCount; i++) {
+		QAction *const act = menu_new_view_->addAction(tr(views::ViewTypeNames[i]));
+		connect(act, &QAction::triggered, this, [this, i] {
+			if (auto s = active_session())
+				on_new_view(s.get(), i);
+		});
+	}
+
+	view_menu->addSeparator();
+
+	menu_action_zoom_in_ = view_menu->addAction(
+		QIcon::fromTheme("zoom-in", QIcon(":/icons/zoom-in.png")), tr("Zoom &In"));
+	set_menu_hint_shortcut(menu_action_zoom_in_, QKeySequence::ZoomIn);
+	connect(menu_action_zoom_in_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->action_view_zoom_in()->trigger();
+	});
+
+	menu_action_zoom_out_ = view_menu->addAction(
+		QIcon::fromTheme("zoom-out", QIcon(":/icons/zoom-out.png")), tr("Zoom &Out"));
+	set_menu_hint_shortcut(menu_action_zoom_out_, QKeySequence::ZoomOut);
+	connect(menu_action_zoom_out_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->action_view_zoom_out()->trigger();
+	});
+
+	menu_action_zoom_fit_ = view_menu->addAction(
+		QIcon::fromTheme("zoom-fit-best", QIcon(":/icons/zoom-fit-best.png")), tr("Zoom to &Fit"));
+	menu_action_zoom_fit_->setCheckable(true);
+	set_menu_hint_shortcut(menu_action_zoom_fit_, QKeySequence(Qt::Key_F));
+	connect(menu_action_zoom_fit_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->action_view_zoom_fit()->trigger();
+	});
+
+	view_menu->addSeparator();
+
+	menu_action_show_cursors_ = view_menu->addAction(
+		QIcon(":/icons/show-cursors.svg"), tr("Show &Cursors"));
+	menu_action_show_cursors_->setCheckable(true);
+	set_menu_hint_shortcut(menu_action_show_cursors_, QKeySequence(Qt::Key_C));
+	connect(menu_action_show_cursors_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->action_view_show_cursors()->trigger();
+	});
+
+	menu_action_compress_idle_ = view_menu->addAction(tr("Compress &Idle Intervals"));
+	menu_action_compress_idle_->setCheckable(true);
+	connect(menu_action_compress_idle_, &QAction::triggered, this, [this](bool checked) {
+		if (auto mb = active_main_bar())
+			mb->action_compress_idle()->setChecked(checked);
+	});
+
+	view_menu->addSeparator();
+
+	menu_action_sticky_scrolling_ = view_menu->addAction(tr("&Sticky Scrolling"));
+	menu_action_sticky_scrolling_->setCheckable(true);
+	menu_action_sticky_scrolling_->setShortcut(QKeySequence(Qt::Key_S));
+	menu_action_sticky_scrolling_->setStatusTip(tr("Keep scrolling pinned to the latest incoming samples during capture"));
+	connect(menu_action_sticky_scrolling_, &QAction::triggered,
+		this, &MainWindow::on_view_sticky_scrolling_shortcut);
+
+	menu_action_sampling_points_ = view_menu->addAction(tr("Show Sampling &Points"));
+	menu_action_sampling_points_->setCheckable(true);
+	menu_action_sampling_points_->setShortcut(QKeySequence(Qt::Key_Period));
+	menu_action_sampling_points_->setStatusTip(tr("Highlight individual sample dots when zoomed in"));
+	connect(menu_action_sampling_points_, &QAction::triggered,
+		this, &MainWindow::on_view_show_sampling_points_shortcut);
+
+	menu_action_analog_minor_grid_ = view_menu->addAction(tr("Show Analog Minor &Grid"));
+	menu_action_analog_minor_grid_->setCheckable(true);
+	menu_action_analog_minor_grid_->setShortcut(QKeySequence(Qt::Key_G));
+	menu_action_analog_minor_grid_->setStatusTip(tr("Display minor voltage division grid lines on analog traces"));
+	connect(menu_action_analog_minor_grid_, &QAction::triggered,
+		this, &MainWindow::on_view_show_analog_minor_grid_shortcut);
+
+	menu_action_colored_bg_ = view_menu->addAction(tr("Colored Signal &Backgrounds"));
+	menu_action_colored_bg_->setCheckable(true);
+	menu_action_colored_bg_->setShortcut(QKeySequence(Qt::Key_B));
+	menu_action_colored_bg_->setStatusTip(tr("Tint each trace row lightly with its signal color"));
+	connect(menu_action_colored_bg_, &QAction::triggered,
+		this, &MainWindow::on_view_colored_bg_shortcut);
+
+	// --- Tools Menu ---
+	QMenu *const tools_menu = bar->addMenu(tr("&Tools"));
+
+#ifdef ENABLE_DECODE
+	menu_action_add_decoder_ = tools_menu->addAction(
+		QIcon(":/icons/add-decoder.svg"), tr("Add Protocol &Decoder..."));
+	set_menu_hint_shortcut(menu_action_add_decoder_, QKeySequence(Qt::Key_D));
+	menu_action_add_decoder_->setStatusTip(tr("Add a protocol decoder (I2C, SPI, UART, CAN, etc.)"));
+	connect(menu_action_add_decoder_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->trigger_add_decoder();
+	});
+#endif
+
+	menu_action_add_math_ = tools_menu->addAction(
+		QIcon(":/icons/add-math-signal.svg"), tr("Add &Math Channel"));
+	set_menu_hint_shortcut(menu_action_add_math_, QKeySequence(Qt::Key_M));
+	menu_action_add_math_->setStatusTip(tr("Add a formula-based math waveform channel"));
+	connect(menu_action_add_math_, &QAction::triggered, this, [this] {
+		if (auto mb = active_main_bar())
+			mb->trigger_add_math();
+	});
+
+	tools_menu->addSeparator();
+
+	QAction *const act_prefs = tools_menu->addAction(
+		QIcon::fromTheme("preferences-system", QIcon(":/icons/preferences-system.png")), tr("&Preferences..."));
+	act_prefs->setShortcut(QKeySequence::Preferences);
+	act_prefs->setMenuRole(QAction::PreferencesRole);
+	act_prefs->setStatusTip(tr("Configure appearance, views, decoders, and logging"));
+	connect(act_prefs, &QAction::triggered, this, &MainWindow::on_settings_clicked);
+
+	// --- Help Menu ---
+	QMenu *const help_menu = bar->addMenu(tr("&Help"));
+
+	QAction *const act_shortcuts = help_menu->addAction(
+		QIcon::fromTheme("help-browser", QIcon(":/icons/help-browser.png")), tr("&Keyboard Shortcuts..."));
+	act_shortcuts->setStatusTip(tr("View a quick reference of PulseView2 keyboard and mouse shortcuts"));
+	connect(act_shortcuts, &QAction::triggered, this, &MainWindow::on_help_shortcuts_triggered);
+
+	help_menu->addSeparator();
+
+	QAction *const act_zadig = help_menu->addAction(tr("Download &Zadig"));
+	act_zadig->setStatusTip(tr("Open the Zadig Windows USB driver installer website"));
+	connect(act_zadig, &QAction::triggered, this, [] {
+		QDesktopServices::openUrl(QUrl("http://zadig.akeo.ie/"));
+	});
+
+	QAction *const act_sigrok = help_menu->addAction(tr("&Sigrok website"));
+	act_sigrok->setStatusTip(tr("Open the sigrok project website"));
+	connect(act_sigrok, &QAction::triggered, this, [] {
+		QDesktopServices::openUrl(QUrl("https://sigrok.org/"));
+	});
+
+	QAction *const act_repo = help_menu->addAction(tr("&Pulseview2 repo"));
+	act_repo->setStatusTip(tr("Open the PulseView2 GitHub repository"));
+	connect(act_repo, &QAction::triggered, this, [] {
+		QDesktopServices::openUrl(QUrl("https://github.com/mrcodetastic/pulseview2"));
+	});
+
+	help_menu->addSeparator();
+
+	QAction *const act_about = help_menu->addAction(
+		QIcon(":/icons/information.svg"), tr("&About PulseView2..."));
+	act_about->setMenuRole(QAction::AboutRole);
+	act_about->setStatusTip(tr("Show PulseView2 version and library information"));
+	connect(act_about, &QAction::triggered, this, &MainWindow::on_help_about_triggered);
+}
+
+void MainWindow::setup_status_bar()
+{
+	status_device_label_ = new QLabel(this);
+	status_device_label_->setContentsMargins(6, 0, 6, 0);
+
+	status_state_label_ = new QLabel(this);
+	status_state_label_->setContentsMargins(8, 0, 8, 0);
+
+	statusBar()->addPermanentWidget(status_device_label_);
+	statusBar()->addPermanentWidget(status_state_label_);
+	update_status_bar(nullptr);
+}
+
+shared_ptr<Session> MainWindow::active_session() const
+{
+	if (last_focused_session_)
+		return last_focused_session_;
+	return get_tab_session(session_selector_.currentIndex());
+}
+
+shared_ptr<MainBar> MainWindow::active_main_bar() const
+{
+	shared_ptr<Session> s = active_session();
+	return s ? s->main_bar() : nullptr;
 }
 
 void MainWindow::update_acq_button(Session *session)
 {
+	if (session && session->main_bar())
+		session->main_bar()->update_run_stop_button();
+
 	int state;
 	QString run_caption;
 
 	if (session) {
 		state = session->get_capture_state();
-		run_caption = session->using_file_device() ? tr("Reload") : tr("Run");
+		run_caption = session->using_file_device() ? tr("&Reload") : tr("&Run");
 	} else {
 		state = Session::Stopped;
-		run_caption = tr("Run");
+		run_caption = tr("&Run");
 	}
 
-	const QIcon *icons[] = {&icon_grey_, &icon_red_, &icon_green_};
-	run_stop_button_->setIcon(*icons[state]);
-	run_stop_button_->setText((state == pv::Session::Stopped) ?
-		run_caption : tr("Stop"));
+	if (menu_action_run_stop_) {
+		if (state == Session::Stopped) {
+			menu_action_run_stop_->setIcon(
+				(session && session->using_file_device()) ? icon_reload_ : icon_play_);
+			menu_action_run_stop_->setText(run_caption);
+		} else if (state == Session::AwaitingTrigger) {
+			menu_action_run_stop_->setIcon(icon_waiting_);
+			menu_action_run_stop_->setText(tr("&Cancel Trigger Wait"));
+		} else {
+			menu_action_run_stop_->setIcon(icon_stop_);
+			menu_action_run_stop_->setText(tr("&Stop"));
+		}
+
+		const bool reconnect_needed = session && session->device_needs_reconnect();
+		const bool stopping = session && session->stop_requested();
+		menu_action_run_stop_->setEnabled(session && !reconnect_needed && !stopping);
+	}
+
+	update_menu_state();
+	update_status_bar(session);
+}
+
+void MainWindow::update_menu_state()
+{
+	shared_ptr<Session> s = active_session();
+	shared_ptr<MainBar> mb = s ? s->main_bar() : nullptr;
+	const bool has_session = (mb != nullptr);
+	const bool stopped = s && (s->get_capture_state() == Session::Stopped);
+	const bool hw_ready = stopped && !s->device_needs_reconnect();
+
+	if (menu_action_open_) menu_action_open_->setEnabled(has_session);
+	if (menu_action_save_) menu_action_save_->setEnabled(has_session);
+	if (menu_action_save_as_) menu_action_save_as_->setEnabled(has_session);
+	if (menu_action_save_selection_as_) menu_action_save_selection_as_->setEnabled(has_session);
+	if (menu_action_restore_setup_) menu_action_restore_setup_->setEnabled(has_session);
+	if (menu_action_save_setup_) menu_action_save_setup_->setEnabled(has_session);
+	if (menu_import_) menu_import_->setEnabled(has_session);
+	if (menu_export_) menu_export_->setEnabled(has_session);
+
+	if (menu_action_connect_) menu_action_connect_->setEnabled(has_session && stopped);
+	if (menu_action_reconnect_) {
+		const bool can_reconnect = has_session && stopped && s->has_reconnect_target();
+		menu_action_reconnect_->setEnabled(can_reconnect);
+		const QString target = s ? s->reconnect_target_name() : QString();
+		menu_action_reconnect_->setText(target.isEmpty() ?
+			tr("&Reconnect Last Device") :
+			tr("&Reconnect %1").arg(target));
+	}
+	if (menu_action_configure_device_) menu_action_configure_device_->setEnabled(has_session && hw_ready);
+	if (menu_action_configure_channels_) menu_action_configure_channels_->setEnabled(has_session && hw_ready);
+	if (menu_action_triggers_) menu_action_triggers_->setEnabled(has_session && hw_ready);
+
+	if (menu_new_view_) menu_new_view_->setEnabled(has_session);
+	if (menu_action_zoom_in_) menu_action_zoom_in_->setEnabled(has_session);
+	if (menu_action_zoom_out_) menu_action_zoom_out_->setEnabled(has_session);
+	if (menu_action_zoom_fit_) {
+		menu_action_zoom_fit_->setEnabled(has_session);
+		const QSignalBlocker b(menu_action_zoom_fit_);
+		menu_action_zoom_fit_->setChecked(mb && mb->action_view_zoom_fit()->isChecked());
+	}
+	if (menu_action_show_cursors_) {
+		menu_action_show_cursors_->setEnabled(has_session);
+		const QSignalBlocker b(menu_action_show_cursors_);
+		menu_action_show_cursors_->setChecked(mb && mb->action_view_show_cursors()->isChecked());
+	}
+	if (menu_action_compress_idle_) {
+		menu_action_compress_idle_->setEnabled(has_session && stopped);
+		const QSignalBlocker b(menu_action_compress_idle_);
+		menu_action_compress_idle_->setChecked(mb && mb->action_compress_idle()->isChecked());
+	}
+
+	GlobalSettings settings;
+	if (menu_action_sticky_scrolling_) {
+		const QSignalBlocker b(menu_action_sticky_scrolling_);
+		menu_action_sticky_scrolling_->setChecked(
+			settings.value(GlobalSettings::Key_View_StickyScrolling).toBool());
+	}
+	if (menu_action_sampling_points_) {
+		const QSignalBlocker b(menu_action_sampling_points_);
+		menu_action_sampling_points_->setChecked(
+			settings.value(GlobalSettings::Key_View_ShowSamplingPoints).toBool());
+	}
+	if (menu_action_analog_minor_grid_) {
+		const QSignalBlocker b(menu_action_analog_minor_grid_);
+		menu_action_analog_minor_grid_->setChecked(
+			settings.value(GlobalSettings::Key_View_ShowAnalogMinorGrid).toBool());
+	}
+	if (menu_action_colored_bg_) {
+		const QSignalBlocker b(menu_action_colored_bg_);
+		menu_action_colored_bg_->setChecked(
+			settings.value(GlobalSettings::Key_View_ColoredBG).toBool());
+	}
+
+#ifdef ENABLE_DECODE
+	if (menu_action_add_decoder_) menu_action_add_decoder_->setEnabled(has_session);
+#endif
+	if (menu_action_add_math_) menu_action_add_math_->setEnabled(has_session);
+}
+
+void MainWindow::update_status_bar(Session *session)
+{
+	if (!status_device_label_ || !status_state_label_)
+		return;
+
+	if (!session) {
+		status_device_label_->setText(tr("No active session"));
+		status_state_label_->setText(QString());
+		return;
+	}
+
+	QString dev_text = tr("No device selected");
+	if (auto dev = session->device()) {
+		dev_text = QString::fromStdString(dev->display_name(device_manager_));
+		const double sr = session->get_samplerate();
+		if (sr > 0) {
+			dev_text += "  •  " + pv::util::format_value_si(
+				sr, pv::util::SIPrefix::unspecified, 0, "Hz", false);
+		}
+	}
+	status_device_label_->setText(dev_text);
+
+	if (session->device_needs_reconnect()) {
+		status_state_label_->setText(tr("Disconnected"));
+	} else if (session->stop_requested()) {
+		status_state_label_->setText(tr("Stopping..."));
+	} else {
+		switch (session->get_capture_state()) {
+		case Session::Stopped:
+			status_state_label_->setText(tr("Ready"));
+			break;
+		case Session::AwaitingTrigger:
+			status_state_label_->setText(tr("Waiting for trigger..."));
+			break;
+		case Session::Running:
+			status_state_label_->setText(tr("Capturing..."));
+			break;
+		}
+	}
 }
 
 void MainWindow::save_ui_settings()
@@ -618,7 +1104,7 @@ void MainWindow::restore_ui_settings()
 		restoreGeometry(settings.value("geometry").toByteArray());
 		restoreState(settings.value("state").toByteArray());
 	} else
-		resize(1000, 720);
+		resize(1200, 760);
 
 	settings.endGroup();
 }
@@ -670,6 +1156,11 @@ bool MainWindow::restoreState(const QByteArray &state, int version)
 
 void MainWindow::on_run_stop_clicked()
 {
+	on_run_stop_for_session(active_session().get());
+}
+
+void MainWindow::on_run_stop_for_session(Session *target_session)
+{
 	GlobalSettings settings;
 	bool all_sessions = settings.value(GlobalSettings::Key_General_StartAllSessions).toBool();
 
@@ -692,16 +1183,18 @@ void MainWindow::on_run_stop_clicked()
 				{ return (s->get_capture_state() == Session::AwaitingTrigger) ||
 						(s->get_capture_state() == Session::Running); });
 
-		for (shared_ptr<Session> s : hw_sessions)
+		for (shared_ptr<Session> s : hw_sessions) {
 			if (any_running)
-				s->stop_capture();
-			else
+				s->request_stop_capture();
+			else if (!s->device_needs_reconnect() && !s->stop_requested())
 				s->start_capture([&](QString message) {Q_EMIT session_error_raised("Capture failed", message);});
+			if (s->main_bar())
+				s->main_bar()->update_run_stop_button();
+		}
+		update_acq_button(last_focused_session_.get());
 	} else {
-
-		shared_ptr<Session> session = last_focused_session_;
-
-		if (!session)
+		Session *session = target_session ? target_session : last_focused_session_.get();
+		if (!session || session->device_needs_reconnect() || session->stop_requested())
 			return;
 
 		switch (session->get_capture_state()) {
@@ -710,7 +1203,12 @@ void MainWindow::on_run_stop_clicked()
 			break;
 		case Session::AwaitingTrigger:
 		case Session::Running:
-			session->stop_capture();
+			try {
+				session->request_stop_capture();
+			} catch (sigrok::Error& error) {
+				Q_EMIT session_error_raised(tr("Capture failed"), error.what());
+			}
+			update_acq_button(session);
 			break;
 		}
 	}
@@ -722,6 +1220,11 @@ void MainWindow::on_add_view(views::ViewType type, Session *session)
 	for (shared_ptr<Session>& s : sessions_)
 		if (s.get() == session)
 			add_view(type, *s);
+}
+
+void MainWindow::on_remove_view(shared_ptr<views::ViewBase> view)
+{
+	remove_view(view);
 }
 
 void MainWindow::on_focus_changed()
@@ -768,7 +1271,72 @@ void MainWindow::on_new_session_clicked()
 
 void MainWindow::on_settings_clicked()
 {
-	dialogs::Settings dlg(device_manager_);
+	dialogs::Settings dlg(device_manager_, this);
+	dlg.exec();
+	update_menu_state();
+}
+
+void MainWindow::on_help_shortcuts_triggered()
+{
+	QDialog dlg(this);
+	dlg.setWindowTitle(tr("Keyboard & Mouse Shortcuts"));
+	dlg.resize(540, 440);
+
+	QVBoxLayout *layout = new QVBoxLayout(&dlg);
+	QTableWidget *table = new QTableWidget(&dlg);
+	table->setColumnCount(2);
+	table->setHorizontalHeaderLabels({tr("Shortcut"), tr("Action")});
+	table->horizontalHeader()->setStretchLastSection(true);
+	table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+	table->verticalHeader()->setVisible(false);
+	table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+	table->setSelectionBehavior(QAbstractItemView::SelectRows);
+	table->setAlternatingRowColors(true);
+
+	const QList<QPair<QString, QString>> rows = {
+		{tr("Space"), tr("Start / Stop acquisition (or reload file)")},
+		{tr("Ctrl+Shift+R"), tr("Reconnect to last used hardware device")},
+		{tr("Ctrl+N"), tr("New capture session tab")},
+		{tr("Ctrl+O"), tr("Open sigrok capture (.sr)")},
+		{tr("Ctrl+S"), tr("Save capture (.sr)")},
+		{tr("Ctrl+R"), tr("Save selected cursor range as .sr")},
+		{tr("Ctrl+W"), tr("Close current session tab")},
+		{tr("Ctrl+Q"), tr("Quit PulseView2")},
+		{tr("Mouse Wheel / + / -"), tr("Zoom in / out on time axis")},
+		{tr("Shift + Wheel / Drag"), tr("Pan horizontally along time axis")},
+		{tr("Ctrl + Wheel"), tr("Scroll vertically through channels")},
+		{tr("F"), tr("Zoom to Fit entire capture")},
+		{tr("C"), tr("Show / Hide measurement cursors")},
+		{tr("D"), tr("Add protocol decoder")},
+		{tr("M"), tr("Add math waveform channel")},
+		{tr("S"), tr("Toggle sticky scrolling")},
+		{tr("."), tr("Toggle sampling point markers")},
+		{tr("G"), tr("Toggle analog minor grid")},
+		{tr("B"), tr("Toggle colored signal backgrounds")},
+	};
+
+	table->setRowCount(rows.size());
+	for (int i = 0; i < rows.size(); ++i) {
+		QTableWidgetItem *key_item = new QTableWidgetItem(rows[i].first);
+		QFont f = key_item->font();
+		f.setBold(true);
+		key_item->setFont(f);
+		table->setItem(i, 0, key_item);
+		table->setItem(i, 1, new QTableWidgetItem(rows[i].second));
+	}
+
+	QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dlg);
+	connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+	layout->addWidget(table);
+	layout->addWidget(buttons);
+	dlg.exec();
+}
+
+void MainWindow::on_help_about_triggered()
+{
+	dialogs::Settings dlg(device_manager_, this);
+	dlg.select_about_page();
 	dlg.exec();
 }
 
@@ -951,6 +1519,7 @@ void MainWindow::on_view_colored_bg_shortcut()
 
 	bool state = settings.value(GlobalSettings::Key_View_ColoredBG).toBool();
 	settings.setValue(GlobalSettings::Key_View_ColoredBG, !state);
+	update_menu_state();
 }
 
 void MainWindow::on_view_sticky_scrolling_shortcut()
@@ -959,6 +1528,7 @@ void MainWindow::on_view_sticky_scrolling_shortcut()
 
 	bool state = settings.value(GlobalSettings::Key_View_StickyScrolling).toBool();
 	settings.setValue(GlobalSettings::Key_View_StickyScrolling, !state);
+	update_menu_state();
 }
 
 void MainWindow::on_view_show_sampling_points_shortcut()
@@ -967,6 +1537,7 @@ void MainWindow::on_view_show_sampling_points_shortcut()
 
 	bool state = settings.value(GlobalSettings::Key_View_ShowSamplingPoints).toBool();
 	settings.setValue(GlobalSettings::Key_View_ShowSamplingPoints, !state);
+	update_menu_state();
 }
 
 void MainWindow::on_view_show_analog_minor_grid_shortcut()
@@ -975,6 +1546,7 @@ void MainWindow::on_view_show_analog_minor_grid_shortcut()
 
 	bool state = settings.value(GlobalSettings::Key_View_ShowAnalogMinorGrid).toBool();
 	settings.setValue(GlobalSettings::Key_View_ShowAnalogMinorGrid, !state);
+	update_menu_state();
 }
 
 void MainWindow::on_close_current_tab()
@@ -984,8 +1556,56 @@ void MainWindow::on_close_current_tab()
 	on_tab_close_requested(tab);
 }
 
-void MainWindow::on_session_error_raised(const QString text, const QString info_text) {
-	MainWindow::show_session_error(text, info_text);
+void MainWindow::on_session_error_raised(const QString text, const QString info_text)
+{
+	Session *session = qobject_cast<Session*>(sender());
+	if (!session)
+		session = active_session().get();
+
+	const bool is_capture_or_device_error =
+		(text == tr("Capture failed") ||
+		 text == tr("Capture incomplete") ||
+		 text == tr("Failed to open device"));
+
+	const bool can_reconnect =
+		session && !session->using_file_device() &&
+		session->has_reconnect_target() &&
+		is_capture_or_device_error &&
+		info_text != tr("No channels enabled.");
+
+	if (!can_reconnect) {
+		MainWindow::show_session_error(text, info_text, this);
+		return;
+	}
+
+	qDebug() << "Notifying user of session error (with reconnect option):" << text << ";" << info_text;
+
+	const QString target_name = session->reconnect_target_name();
+	QMessageBox msg(this);
+	msg.setWindowTitle(text);
+	msg.setIcon(QMessageBox::Warning);
+	msg.setText(text + "\n\n" +
+		tr("The device may have been disconnected or reset. "
+		   "Make sure %1 is plugged in and click Reconnect.")
+			.arg(target_name.isEmpty() ? tr("the device") : target_name));
+	msg.setInformativeText(tr("Details: %1").arg(info_text));
+
+	QPushButton *reconnect_btn = msg.addButton(
+		target_name.isEmpty() ? tr("&Reconnect") : tr("&Reconnect %1").arg(target_name),
+		QMessageBox::AcceptRole);
+	msg.addButton(QMessageBox::Close);
+	msg.setDefaultButton(reconnect_btn);
+	msg.exec();
+
+	if (msg.clickedButton() == reconnect_btn) {
+		if (auto mb = session->main_bar()) {
+			if (mb->reconnect_with_retry_ui()) {
+				statusBar()->showMessage(
+					tr("Reconnected to %1").arg(session->reconnect_target_name()), 5000);
+			}
+			update_acq_button(session);
+		}
+	}
 }
 
 } // namespace pv

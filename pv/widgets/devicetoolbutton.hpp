@@ -80,6 +80,11 @@ public:
 	 */
 	void reset();
 
+	/**
+	 * Sets an optional quick-reconnect action shown in the dropdown menu.
+	 */
+	void set_reconnect_action(QAction *action);
+
 private:
 	/**
 	 * Repopulates the menu from the device list.
@@ -99,6 +104,7 @@ Q_SIGNALS:
 private:
 	DeviceManager &device_manager_;
 	QAction *const connect_action_;
+	QAction *reconnect_action_;
 
 	QMenu menu_;
 	QSignalMapper mapper_;

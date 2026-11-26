@@ -23,10 +23,10 @@
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 
 #include <QDebug>
 
-using std::bad_alloc;
 using std::lock_guard;
 using std::min;
 using std::recursive_mutex;
@@ -100,6 +100,7 @@ uint32_t Segment::segment_id() const
 void Segment::set_complete()
 {
 	is_complete_ = true;
+	free_unused_memory();
 
 	completed();
 }
@@ -119,16 +120,18 @@ void Segment::free_unused_memory()
 		return;
 	}
 
-	if (current_chunk_) {
+	if (current_chunk_ && unused_samples_) {
 		// No more data will come in, so re-create the last chunk accordingly
-		uint8_t* resized_chunk = new uint8_t[used_samples_ * unit_size_ + 7];  /* FIXME +7 is workaround for #1284 */
+		uint8_t* resized_chunk = new (std::nothrow) uint8_t[used_samples_ * unit_size_ + 7];  /* FIXME +7 is workaround for #1284 */
+		if (!resized_chunk)
+			return;
 		memcpy(resized_chunk, current_chunk_, used_samples_ * unit_size_);
 
 		delete[] current_chunk_;
 		current_chunk_ = resized_chunk;
 
-		data_chunks_.pop_back();
-		data_chunks_.push_back(resized_chunk);
+		data_chunks_.back() = resized_chunk;
+		unused_samples_ = 0;
 	}
 }
 
@@ -144,8 +147,9 @@ void Segment::append_single_sample(void *data)
 	unused_samples_--;
 
 	if (unused_samples_ == 0) {
-		current_chunk_ = new uint8_t[chunk_size_ + 7];  /* FIXME +7 is workaround for #1284 */
-		data_chunks_.push_back(current_chunk_);
+		std::unique_ptr<uint8_t[]> next_chunk(new uint8_t[chunk_size_ + 7]);  /* FIXME +7 is workaround for #1284 */
+		data_chunks_.push_back(next_chunk.get());
+		current_chunk_ = next_chunk.release();
 		used_samples_ = 0;
 		unused_samples_ = chunk_size_ / unit_size_;
 	}
@@ -182,27 +186,19 @@ void Segment::append_samples(void* data, uint64_t samples)
 		data_offset += (copy_count * unit_size_);
 
 		if (unused_samples_ == 0) {
-			try {
-				// If we're out of memory, allocating a chunk will throw
-				// std::bad_alloc. To give the application some usable memory
-				// to work with in case chunk allocation fails, we allocate
-				// extra memory and throw it away if it all succeeded.
-				// This way, memory allocation will fail early enough to let
-				// PV remain alive. Otherwise, PV will crash in a random
-				// memory-allocating part of the application.
-				current_chunk_ = new uint8_t[chunk_size_ + 7];  /* FIXME +7 is workaround for #1284 */
-
+			// Keep the existing chunk owned until both allocation and
+			// publication of its successor have succeeded.
+			std::unique_ptr<uint8_t[]> next_chunk(new uint8_t[chunk_size_ + 7]);  /* FIXME +7 is workaround for #1284 */
+			{
+				// Reserve temporary headroom so allocation fails while the
+				// application can still report it and preserve earlier data.
 				const int dummy_size = 2 * chunk_size_;
-				auto dummy_chunk = new uint8_t[dummy_size];
-				memset(dummy_chunk, 0xFF, dummy_size);
-				delete[] dummy_chunk;
-			} catch (bad_alloc&) {
-				delete[] current_chunk_;  // The new may have succeeded
-				current_chunk_ = nullptr;
-				throw;
+				std::unique_ptr<uint8_t[]> dummy_chunk(new uint8_t[dummy_size]);
+				memset(dummy_chunk.get(), 0xFF, dummy_size);
 			}
 
-			data_chunks_.push_back(current_chunk_);
+			data_chunks_.push_back(next_chunk.get());
+			current_chunk_ = next_chunk.release();
 			used_samples_ = 0;
 			unused_samples_ = chunk_size_ / unit_size_;
 		}
