@@ -204,6 +204,9 @@ private:
 	QAction *menu_action_zoom_in_;
 	QAction *menu_action_zoom_out_;
 	QAction *menu_action_zoom_fit_;
+	QAction *menu_action_increase_height_;
+	QAction *menu_action_decrease_height_;
+	QAction *menu_action_reset_height_;
 	QAction *menu_action_show_cursors_;
 	QAction *menu_action_compress_idle_;
 	QAction *menu_action_sticky_scrolling_;

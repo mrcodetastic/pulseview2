@@ -129,6 +129,10 @@ protected:
 
 	virtual void update_logic_level_offsets();
 
+public:
+	int signal_height() const;
+	void set_signal_height(int height);
+
 protected Q_SLOTS:
 	void on_setting_changed(const QString &key, const QVariant &value);
 

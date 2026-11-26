@@ -62,9 +62,6 @@ StandardBar::StandardBar(Session &session, QWidget *parent,
 		QIcon(":/icons/zoom-in.png")));
 	action_view_zoom_in_->setToolTip(tr("Zoom In (+)"));
 	action_view_zoom_in_->setStatusTip(tr("Zoom in on the time axis"));
-	// simply using Qt::Key_Plus shows no + in the menu
-	action_view_zoom_in_->setShortcut(QKeySequence::ZoomIn);
-	action_view_zoom_in_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 	connect(action_view_zoom_in_, SIGNAL(triggered(bool)),
 		this, SLOT(on_actionViewZoomIn_triggered()));
 
@@ -73,8 +70,6 @@ StandardBar::StandardBar(Session &session, QWidget *parent,
 		QIcon(":/icons/zoom-out.png")));
 	action_view_zoom_out_->setToolTip(tr("Zoom Out (-)"));
 	action_view_zoom_out_->setStatusTip(tr("Zoom out on the time axis"));
-	action_view_zoom_out_->setShortcut(QKeySequence::ZoomOut);
-	action_view_zoom_out_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 	connect(action_view_zoom_out_, SIGNAL(triggered(bool)),
 		this, SLOT(on_actionViewZoomOut_triggered()));
 

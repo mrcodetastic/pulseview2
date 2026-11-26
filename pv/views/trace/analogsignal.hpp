@@ -148,6 +148,10 @@ protected:
 
 	virtual void hover_point_changed(const QPoint &hp);
 
+public:
+	int div_height() const;
+	void set_div_height(int height);
+
 private Q_SLOTS:
 	virtual void on_setting_changed(const QString &key, const QVariant &value);
 
