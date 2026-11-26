@@ -314,7 +314,7 @@ memaccess_check_unaligned_le(HAVE_UNALIGNED_LITTLE_ENDIAN_ACCESS)
 #-------------------------------------------------------------------------------
 
 set(PV_TITLE PulseView)
-set(PV_VERSION_STRING "0.5.0")
+set(PV_VERSION_STRING "1.0.0")
 
 if(GLIBMM_2_4_FOUND)
 	set(PV_GLIBMM_VERSION ${PKGDEPS_glibmm-2.4_VERSION})
