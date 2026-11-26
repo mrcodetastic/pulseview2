@@ -38,9 +38,6 @@ using std::vector;
 
 namespace pv {
 
-extern const vector< pair<QString, QString> > Themes;
-
-
 class GlobalSettingsInterface
 {
 public:
@@ -54,7 +51,6 @@ class GlobalSettings : public QSettings
 
 public:
 	static const QString Key_General_Language;
-	static const QString Key_General_Theme;
 	static const QString Key_General_Style;
 	static const QString Key_General_SaveWithSetup;
 	static const QString Key_General_StartAllSessions;

@@ -43,14 +43,7 @@ using std::vector;
 
 namespace pv {
 
-const vector< pair<QString, QString> > Themes {
-	{"None" , ""},
-	{"QDarkStyleSheet", ":/themes/qdarkstyle/style.qss"},
-	{"DarkStyle", ":/themes/darkstyle/darkstyle.qss"}
-};
-
 const QString GlobalSettings::Key_General_Language = "General_Language";
-const QString GlobalSettings::Key_General_Theme = "General_Theme";
 const QString GlobalSettings::Key_General_Style = "General_Style";
 const QString GlobalSettings::Key_General_SaveWithSetup = "General_SaveWithSetup";
 const QString GlobalSettings::Key_General_StartAllSessions = "General_StartAllSessions";
@@ -113,9 +106,7 @@ void GlobalSettings::set_defaults_where_needed()
 		apply_language();
 	}
 
-	// Use no theme and Fusion widget style by default
-	if (!contains(Key_General_Theme))
-		setValue(Key_General_Theme, 0);
+	// Use Fusion widget style by default
 	if (!contains(Key_General_Style))
 		setValue(Key_General_Style,
 			QStyleFactory::keys().contains("Fusion", Qt::CaseInsensitive) ? "Fusion" : "");
@@ -210,16 +201,7 @@ bool GlobalSettings::current_theme_is_dark()
 
 void GlobalSettings::apply_theme()
 {
-	QString theme_name    = Themes.at(value(Key_General_Theme).toInt()).first;
-	QString resource_name = Themes.at(value(Key_General_Theme).toInt()).second;
-
-	if (!resource_name.isEmpty()) {
-		QFile file(resource_name);
-		file.open(QFile::ReadOnly | QFile::Text);
-		qApp->setStyleSheet(file.readAll());
-	} else
-		qApp->setStyleSheet("");
-
+	qApp->setStyleSheet("");
 	qApp->setPalette(default_palette_);
 
 	const QString style = value(Key_General_Style).toString();
@@ -233,41 +215,6 @@ void GlobalSettings::apply_theme()
 	}
 
 	is_dark_theme_ = false;
-
-	if (theme_name.compare("QDarkStyleSheet") == 0) {
-		QPalette dark_palette;
-		dark_palette.setColor(QPalette::Window, QColor(53, 53, 53));
-		dark_palette.setColor(QPalette::WindowText, Qt::white);
-		dark_palette.setColor(QPalette::Base, QColor(42, 42, 42));
-		dark_palette.setColor(QPalette::Dark, QColor(35, 35, 35));
-		dark_palette.setColor(QPalette::Highlight, QColor(42, 130, 218));
-		qApp->setPalette(dark_palette);
-		is_dark_theme_ = true;
-	} else if (theme_name.compare("DarkStyle") == 0) {
-		QPalette dark_palette;
-		dark_palette.setColor(QPalette::Window, QColor(53, 53, 53));
-		dark_palette.setColor(QPalette::WindowText, Qt::white);
-		dark_palette.setColor(QPalette::Disabled, QPalette::WindowText, QColor(127, 127, 127));
-		dark_palette.setColor(QPalette::Base, QColor(42, 42, 42));
-		dark_palette.setColor(QPalette::AlternateBase, QColor(66, 66, 66));
-		dark_palette.setColor(QPalette::ToolTipBase, Qt::white);
-		dark_palette.setColor(QPalette::ToolTipText, QColor(53, 53, 53));
-		dark_palette.setColor(QPalette::Text, Qt::white);
-		dark_palette.setColor(QPalette::Disabled, QPalette::Text, QColor(127, 127, 127));
-		dark_palette.setColor(QPalette::Dark, QColor(35, 35, 35));
-		dark_palette.setColor(QPalette::Shadow, QColor(20, 20, 20));
-		dark_palette.setColor(QPalette::Button, QColor(53, 53, 53));
-		dark_palette.setColor(QPalette::ButtonText, Qt::white);
-		dark_palette.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(127, 127, 127));
-		dark_palette.setColor(QPalette::BrightText, Qt::red);
-		dark_palette.setColor(QPalette::Link, QColor(42, 130, 218));
-		dark_palette.setColor(QPalette::Highlight, QColor(42, 130, 218));
-		dark_palette.setColor(QPalette::Disabled, QPalette::Highlight, QColor(80, 80, 80));
-		dark_palette.setColor(QPalette::HighlightedText, Qt::white);
-		dark_palette.setColor(QPalette::Disabled, QPalette::HighlightedText, QColor(127, 127, 127));
-		qApp->setPalette(dark_palette);
-		is_dark_theme_ = true;
-	}
 
 	QPixmapCache::clear();
 }

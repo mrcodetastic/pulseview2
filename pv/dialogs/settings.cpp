@@ -248,21 +248,6 @@ QWidget *Settings::get_general_settings_form(QWidget *parent) const
 #endif
 	general_layout->addRow(tr("User interface language"), language_cb);
 
-	// Theme combobox
-	QComboBox *theme_cb = new QComboBox();
-	for (const pair<QString, QString>& entry : Themes)
-		theme_cb->addItem(entry.first, entry.second);
-
-	theme_cb->setCurrentIndex(
-		settings.value(GlobalSettings::Key_General_Theme).toInt());
-	connect(theme_cb, SIGNAL(currentIndexChanged(int)),
-		this, SLOT(on_general_theme_changed(int)));
-	general_layout->addRow(tr("User interface theme"), theme_cb);
-
-	QLabel *description_1 = new QLabel(tr("(You may need to restart PulseView for all UI elements to update)"));
-	description_1->setAlignment(Qt::AlignRight);
-	general_layout->addRow(description_1);
-
 	// Style combobox
 	QComboBox *style_cb = new QComboBox();
 	style_cb->addItem(tr("Default (Fusion)"), "");
@@ -281,10 +266,6 @@ QWidget *Settings::get_general_settings_form(QWidget *parent) const
 	connect(style_cb, SIGNAL(currentIndexChanged(int)),
 		this, SLOT(on_general_style_changed(int)));
 	general_layout->addRow(tr("Qt widget style"), style_cb);
-
-	QLabel *description_2 = new QLabel(tr("(Dark themes look best with the Fusion style)"));
-	description_2->setAlignment(Qt::AlignRight);
-	general_layout->addRow(description_2);
 
 	// Misc
 	cb = create_checkbox(GlobalSettings::Key_General_SaveWithSetup,
@@ -660,31 +641,6 @@ void Settings::on_general_language_changed(const QString &text)
 
 		if (text == desc)
 			settings.setValue(GlobalSettings::Key_General_Language, language);
-	}
-}
-
-void Settings::on_general_theme_changed(int value)
-{
-	GlobalSettings settings;
-	settings.setValue(GlobalSettings::Key_General_Theme, value);
-	settings.apply_theme();
-
-	QMessageBox msg(this);
-	msg.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
-	msg.setIcon(QMessageBox::Question);
-
-	if (settings.current_theme_is_dark()) {
-		msg.setText(tr("You selected a dark theme.\n" \
-			"Should I set the user-adjustable colors to better suit your choice?\n\n" \
-			"Please keep in mind that PulseView may need a restart to display correctly."));
-		if (msg.exec() == QMessageBox::Yes)
-			settings.set_dark_theme_default_colors();
-	} else {
-		msg.setText(tr("You selected a bright theme.\n" \
-			"Should I set the user-adjustable colors to better suit your choice?\n\n" \
-			"Please keep in mind that PulseView may need a restart to display correctly."));
-		if (msg.exec() == QMessageBox::Yes)
-			settings.set_bright_theme_default_colors();
 	}
 }
 
