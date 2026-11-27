@@ -127,6 +127,8 @@ bool restore_trigger_settings(QSettings &settings,
 			g_clear_error(&error);
 			throw std::runtime_error("Invalid hardware trigger setup.");
 		}
+		// Glib::VariantBase(raw) takes ownership of the new reference returned
+		// by g_variant_parse() (take_copy defaults to false), so no g_variant_unref().
 		options = parse_hardware_trigger(Glib::VariantBase(raw));
 	}
 	if (enabled == "false") {

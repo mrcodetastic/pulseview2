@@ -166,9 +166,8 @@ public:
 		uint64_t start_sample, uint64_t end_sample) const;
 
 	/**
-	 * Extracts annotations from a single row into a vector.
-	 * Note: The annotations may be unsorted and only annotations that fully
-	 * fit into the sample range are considered.
+	 * Extracts visible annotations from a single row that overlap
+	 * [start_sample, end_sample] into dest in start_sample order.
 	 */
 	void get_annotation_subset(deque<const Annotation*> &dest, const Row* row,
 		uint32_t segment_id, uint64_t start_sample, uint64_t end_sample) const;
@@ -178,9 +177,8 @@ public:
 		int left_x) const;
 
 	/**
-	 * Extracts annotations from all rows into a vector.
-	 * Note: The annotations may be unsorted and only annotations that fully
-	 * fit into the sample range are considered.
+	 * Extracts visible annotations from all rows that overlap
+	 * [start_sample, end_sample] into dest (ordered per row by start_sample).
 	 */
 	void get_annotation_subset(deque<const Annotation*> &dest, uint32_t segment_id,
 		uint64_t start_sample, uint64_t end_sample) const;
@@ -190,10 +188,12 @@ public:
 	void get_binary_data_chunk(uint32_t segment_id, const Decoder* dec,
 		uint32_t bin_class_id, uint32_t chunk_id, const vector<uint8_t> **dest,
 		uint64_t *size);
+	// Merges whole binary chunks whose start sample lies in [start_sample, end_sample).
 	void get_merged_binary_data_chunks_by_sample(uint32_t segment_id,
 		const Decoder* dec, uint32_t bin_class_id,
 		uint64_t start_sample, uint64_t end_sample,
 		vector<uint8_t> *dest) const;
+	// Merges whole binary chunks overlapping byte offsets [start, end) (chunks are not sliced).
 	void get_merged_binary_data_chunks_by_offset(uint32_t segment_id,
 		const Decoder* dec, uint32_t bin_class_id,
 		uint64_t start, uint64_t end,
@@ -208,6 +208,10 @@ public:
 	virtual void restore_settings(QSettings &settings);
 
 private:
+	const RowData* find_row_data(const Row* row, uint32_t segment_id) const;
+	const DecodeBinaryClass* find_binary_class(uint32_t segment_id,
+		const Decoder* dec, uint32_t bin_class_id) const;
+
 	bool all_input_segments_complete(uint32_t segment_id) const;
 	uint32_t get_input_segment_count() const;
 	double get_input_samplerate(uint32_t segment_id) const;
@@ -225,6 +229,7 @@ private:
 		const shared_ptr<const LogicSegment> input_segment);
 	void decode_proc();
 
+	void apply_srd_metadata_and_options();
 	void start_srd_session();
 	void terminate_srd_session();
 	void stop_srd_session();
@@ -261,6 +266,11 @@ private:
 
 	vector<decode::DecodeChannel> channels_;
 
+	// Two-stage background pipeline:
+	//   input LogicSegments -> logic_mux_thread_ -> logic_mux_data_
+	//                       -> decode_thread_ -> srd_session_ -> segments_
+	// Shutdown must always join decode_thread_ before logic_mux_thread_ and
+	// both before tearing down srd_session_.
 	struct srd_session *srd_session_;
 
 	shared_ptr<Logic> logic_mux_data_;

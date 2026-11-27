@@ -57,7 +57,7 @@ public:
 
 	const QString title() const;
 	const QString description() const;
-	vector<AnnotationClass*> ann_classes() const;
+	const vector<AnnotationClass*>& ann_classes() const;
 	uint32_t index() const;
 
 	bool visible() const;
@@ -79,15 +79,22 @@ Q_SIGNALS:
 	void visibility_changed();
 
 private:
+	struct ClassColors {
+		bool valid = false;
+		QColor normal;
+		QColor bright;
+		QColor dark;
+	};
+
 	uint32_t index_;
 	Decoder* decoder_;
 	const srd_decoder_annotation_row* srd_row_;
 	bool visible_;
 
 	QColor color_;
-	map<uint32_t, QColor> ann_class_color_;
-	map<uint32_t, QColor> ann_bright_class_color_;
-	map<uint32_t, QColor> ann_dark_class_color_;
+	vector<AnnotationClass*> ann_classes_;
+	// Indexed directly by dense ann_class_id (0..N-1) for O(1) lookup on paint.
+	vector<ClassColors> class_colors_;
 };
 
 }  // namespace decode

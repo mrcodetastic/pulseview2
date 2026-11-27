@@ -37,12 +37,6 @@ using std::unique_lock;
 namespace pv {
 namespace data {
 
-#define MATH_ERR_NONE           0
-#define MATH_ERR_EMPTY_EXPR     1
-#define MATH_ERR_EXPRESSION     2
-#define MATH_ERR_INVALID_SIGNAL 3
-#define MATH_ERR_ENABLE         4
-
 const int64_t MathSignal::ChunkLength = 256 * 1024;
 
 
@@ -96,7 +90,7 @@ MathSignal::MathSignal(pv::Session &session) :
 	use_custom_sample_rate_(false),
 	use_custom_sample_count_(false),
 	expression_(""),
-	error_type_(MATH_ERR_NONE),
+	error_type_(ErrorType::None),
 	exprtk_unknown_symbol_table_(nullptr),
 	exprtk_symbol_table_(nullptr),
 	exprtk_expression_(nullptr),
@@ -162,7 +156,7 @@ void MathSignal::set_expression(QString expression)
 	begin_generation();
 }
 
-void MathSignal::set_error(uint8_t type, QString msg)
+void MathSignal::set_error(ErrorType type, QString msg)
 {
 	error_type_ = type;
 	error_message_ = msg;
@@ -184,14 +178,14 @@ uint64_t MathSignal::get_working_sample_count(uint32_t segment_id) const
 		// A custom sample count implies that only one segment will be created
 		result = (segment_id == 0) ? custom_sample_count_ : 0;
 	else {
-		if (input_signals_.size() > 0) {
-			for (auto input_signal : input_signals_) {
+		if (!input_signals_.empty()) {
+			for (const auto& input_signal : input_signals_) {
 				const shared_ptr<SignalBase>& sb = input_signal.second.sb;
 
 				shared_ptr<Analog> a = sb->analog_data();
 				auto analog_segments = a->analog_segments();
 
-				if (analog_segments.size() == 0) {
+				if (analog_segments.empty()) {
 					result = 0;
 					continue;
 				}
@@ -214,14 +208,14 @@ void MathSignal::update_completeness(uint32_t segment_id, uint64_t output_sample
 {
 	bool output_complete = true;
 
-	if (input_signals_.size() > 0) {
-		for (auto input_signal : input_signals_) {
+	if (!input_signals_.empty()) {
+		for (const auto& input_signal : input_signals_) {
 			const shared_ptr<SignalBase>& sb = input_signal.second.sb;
 
 			shared_ptr<Analog> a = sb->analog_data();
 			auto analog_segments = a->analog_segments();
 
-			if (analog_segments.size() == 0) {
+			if (analog_segments.empty()) {
 				output_complete = false;
 				continue;
 			}
@@ -290,7 +284,7 @@ void MathSignal::reset_generation()
 
 	if (!error_message_.isEmpty()) {
 		error_message_.clear();
-		error_type_ = MATH_ERR_NONE;
+		error_type_ = ErrorType::None;
 		// TODO Emulate noquote()
 		qDebug().nospace() << name() << ": Error cleared";
 	}
@@ -303,7 +297,7 @@ void MathSignal::begin_generation()
 	reset_generation();
 
 	if (expression_.isEmpty()) {
-		set_error(MATH_ERR_EMPTY_EXPR, tr("No expression defined, nothing to do"));
+		set_error(ErrorType::EmptyExpression, tr("No expression defined, nothing to do"));
 		return;
 	}
 
@@ -317,6 +311,11 @@ void MathSignal::begin_generation()
 
 	fnc_sample_ = new fnc_sample<double>(*this);
 
+	// ExprTk two-table setup: register built-ins (T, t, s, sample()) in
+	// exprtk_symbol_table_ and enable the unknown-symbol resolver so any
+	// unrecognized identifier (i.e. channel name like "A0") is auto-registered
+	// in exprtk_unknown_symbol_table_. After compile(), we bind each resolved
+	// signal's variable_ref() pointer and update it per sample.
 	exprtk_unknown_symbol_table_ = new exprtk::symbol_table<double>();
 
 	exprtk_symbol_table_ = new exprtk::symbol_table<double>();
@@ -352,7 +351,7 @@ void MathSignal::begin_generation()
 				.arg(error.column_no) \
 				.arg(error.diagnostic.c_str());
 		}
-		set_error(MATH_ERR_EXPRESSION, error_details);
+		set_error(ErrorType::Expression, error_details);
 	} else {
 		// Resolve unknown scalars to signals and add them to the input signal list
 		vector<string> unknowns;
@@ -361,7 +360,7 @@ void MathSignal::begin_generation()
 			signal_data* sig_data = signal_from_name(unknown);
 			const shared_ptr<SignalBase> signal = (sig_data) ? (sig_data->sb) : nullptr;
 			if (!signal || (!signal->analog_data())) {
-				set_error(MATH_ERR_INVALID_SIGNAL, QString(tr("\"%1\" isn't a valid analog signal")) \
+				set_error(ErrorType::InvalidSignal, QString(tr("\"%1\" isn't a valid analog signal")) \
 					.arg(QString::fromStdString(unknown)));
 			} else
 				sig_data->ref = &(exprtk_unknown_symbol_table_->variable_ref(unknown));
@@ -370,7 +369,7 @@ void MathSignal::begin_generation()
 
 	QString disabled_signals;
 	if (!all_input_signals_enabled(disabled_signals) && error_message_.isEmpty())
-		set_error(MATH_ERR_ENABLE,
+		set_error(ErrorType::Enable,
 			tr("No data will be generated as %1 must be enabled").arg(disabled_signals));
 
 	if (error_message_.isEmpty()) {
@@ -398,38 +397,91 @@ uint64_t MathSignal::generate_samples(uint32_t segment_id, const uint64_t start_
 
 	exprtk_current_sample_ = start_sample;
 
-	float *sample_data = new float[sample_count];
+	if (static_cast<int64_t>(sample_buffer_.size()) < sample_count)
+		sample_buffer_.resize(static_cast<size_t>(sample_count));
+
+	// Pre-fetch contiguous blocks for non-self input channels once per chunk
+	// instead of locking and querying AnalogSegment per sample.
+	struct BulkInput {
+		signal_data* sig_data;
+		std::vector<float> samples;
+	};
+	std::vector<BulkInput> bulk_inputs;
+	std::vector<signal_data*> dynamic_inputs;
+
+	if (sample_count > 1 && !input_signals_.empty()) {
+		bulk_inputs.reserve(input_signals_.size());
+		for (auto& entry : input_signals_) {
+			signal_data* sig_data = &(entry.second);
+			const shared_ptr<Analog> in_analog = sig_data->sb->analog_data();
+			if (sig_data->sb.get() != this && in_analog) {
+				const auto segs = in_analog->analog_segments();
+				if (segment_id < segs.size()) {
+					const shared_ptr<AnalogSegment>& in_seg = segs.at(segment_id);
+					const uint64_t avail = in_seg->get_sample_count();
+					BulkInput bi;
+					bi.sig_data = sig_data;
+					if (start_sample < avail) {
+						const uint64_t fetch_end = min(start_sample + static_cast<uint64_t>(sample_count), avail);
+						bi.samples.resize(static_cast<size_t>(fetch_end - start_sample));
+						in_seg->get_samples(start_sample, fetch_end, bi.samples.data());
+					}
+					bulk_inputs.push_back(std::move(bi));
+					continue;
+				}
+			}
+			dynamic_inputs.push_back(sig_data);
+		}
+	}
+
+	const bool use_bulk = !bulk_inputs.empty() || !dynamic_inputs.empty();
 
 	for (int64_t i = 0; i < sample_count; i++) {
 		exprtk_current_time_ = exprtk_current_sample_ / sample_rate;
 
-		for (auto& entry : input_signals_) {
-			signal_data* sig_data  = &(entry.second);
-			update_signal_sample(sig_data, segment_id, exprtk_current_sample_);
+		if (use_bulk) {
+			const uint64_t sample_idx = start_sample + static_cast<uint64_t>(i);
+			for (BulkInput& bi : bulk_inputs) {
+				signal_data* sig_data = bi.sig_data;
+				if (sig_data->sample_num != sample_idx) {
+					sig_data->sample_num = sample_idx;
+					sig_data->sample_value = (static_cast<size_t>(i) < bi.samples.size()) ?
+						bi.samples[static_cast<size_t>(i)] : 0.0;
+					if (sig_data->ref)
+						*(sig_data->ref) = sig_data->sample_value;
+				}
+			}
+			for (signal_data* sig_data : dynamic_inputs)
+				update_signal_sample(sig_data, segment_id, exprtk_current_sample_);
+		} else {
+			for (auto& entry : input_signals_) {
+				signal_data* sig_data = &(entry.second);
+				update_signal_sample(sig_data, segment_id, exprtk_current_sample_);
+			}
 		}
 
 		double value = exprtk_expression_->value();
-		sample_data[i] = value;
+		sample_buffer_[static_cast<size_t>(i)] = value;
 		exprtk_current_sample_ += 1;
 		count++;
 
 		// If during the evaluation of the expression it was found that this
 		// math signal itself is being accessed, the chunk size was reduced
 		// to 1, which means we must stop after this sample we just generated
+		// and commit it immediately so sample(self, s-1) can read it on the next tick.
 		if (generation_chunk_size_ == 1)
 			break;
 	}
 
-	segment->append_interleaved_samples(sample_data, count, 1);
-
-	delete[] sample_data;
+	segment->append_interleaved_samples(sample_buffer_.data(), count, 1);
 
 	return count;
 }
 
 void MathSignal::generation_proc()
 {
-	// Don't do anything until we have a valid sample rate
+	// Session::get_samplerate() returns 1 Hz as a sentinel while no real rate is
+	// known yet; wait until a valid sample rate arrives before allocating output.
 	do {
 		if (use_custom_sample_rate_)
 			data_->set_samplerate(custom_sample_rate_);
@@ -499,8 +551,8 @@ void MathSignal::generation_proc()
 
 signal_data* MathSignal::signal_from_name(const std::string& name)
 {
-	// If the expression contains the math signal itself, we must add every sample to
-	// the output segment immediately so that it can be accessed
+	// Self-referential expressions (e.g. IIR / feedback filters reading their own
+	// prior outputs via sample()) require sample-by-sample commits to output_segment.
 	const QString sig_name = QString::fromStdString(name);
 	if (sig_name == this->name())
 		generation_chunk_size_ = 1;
@@ -532,8 +584,8 @@ signal_data* MathSignal::signal_from_name(const std::string& name)
 	}
 
 	// If we reach this point, no valid signal was found with the supplied name
-	if (error_type_ == MATH_ERR_NONE)
-		set_error(MATH_ERR_INVALID_SIGNAL, QString(tr("\"%1\" isn't a valid analog signal")) \
+	if (error_type_ == ErrorType::None)
+		set_error(ErrorType::InvalidSignal, QString(tr("\"%1\" isn't a valid analog signal")) \
 			.arg(QString::fromStdString(name)));
 
 	return nullptr;
@@ -574,7 +626,7 @@ bool MathSignal::all_input_signals_enabled(QString &disabled_signals) const
 
 	disabled_signals.clear();
 
-	for (auto input_signal : input_signals_) {
+	for (const auto& input_signal : input_signals_) {
 		const shared_ptr<SignalBase>& sb = input_signal.second.sb;
 
 		if (!sb->enabled()) {
@@ -606,11 +658,11 @@ void MathSignal::on_enabled_changed()
 {
 	QString disabled_signals;
 	if (!all_input_signals_enabled(disabled_signals) &&
-		((error_type_ == MATH_ERR_NONE) || (error_type_ == MATH_ERR_ENABLE)))
-		set_error(MATH_ERR_ENABLE,
+		((error_type_ == ErrorType::None) || (error_type_ == ErrorType::Enable)))
+		set_error(ErrorType::Enable,
 			tr("No data will be generated as %1 must be enabled").arg(disabled_signals));
-	else if (disabled_signals.isEmpty() && (error_type_ == MATH_ERR_ENABLE)) {
-		error_type_ = MATH_ERR_NONE;
+	else if (disabled_signals.isEmpty() && (error_type_ == ErrorType::Enable)) {
+		error_type_ = ErrorType::None;
 		error_message_.clear();
 	}
 }

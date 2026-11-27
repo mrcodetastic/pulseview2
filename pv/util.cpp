@@ -124,18 +124,16 @@ static QTextStream& operator<<(QTextStream& stream, const Timestamp& t)
 
 SIPrefix determine_value_prefix(double v)
 {
-	SIPrefix prefix;
+	if (v == 0)
+		return SIPrefix::none;
 
-	if (v == 0) {
-		prefix = SIPrefix::none;
-	} else {
-		int exp = exponent(SIPrefix::yotta);
-		prefix = SIPrefix::yocto;
-		while ((fabs(v) * pow(10, exp)) > 999 &&
-				prefix < SIPrefix::yotta) {
-			prefix = successor(prefix);
-			exp -= 3;
-		}
+	// Scale magnitude into yocto units (10^24) and step down by 1000x per SI
+	// prefix until the scaled value fits under 1000 (avoids calling pow() per step).
+	double scaled = fabs(v) * 1e24;
+	SIPrefix prefix = SIPrefix::yocto;
+	while (scaled > 999.0 && prefix < SIPrefix::yotta) {
+		prefix = successor(prefix);
+		scaled *= 1e-3;
 	}
 
 	return prefix;
@@ -280,13 +278,18 @@ QString format_time_minutes(const Timestamp& t, signed precision, bool sign)
 vector<string> split_string(string text, string separator)
 {
 	vector<string> result;
-	size_t pos;
-
-	while ((pos = text.find(separator)) != std::string::npos) {
-		result.push_back(text.substr(0, pos));
-		text = text.substr(pos + separator.length());
+	if (separator.empty()) {
+		result.push_back(std::move(text));
+		return result;
 	}
-	result.push_back(text);
+
+	size_t start = 0;
+	size_t pos;
+	while ((pos = text.find(separator, start)) != std::string::npos) {
+		result.push_back(text.substr(start, pos - start));
+		start = pos + separator.length();
+	}
+	result.push_back(text.substr(start));
 
 	return result;
 }

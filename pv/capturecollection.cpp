@@ -50,10 +50,28 @@ uint64_t number(const QJsonObject& obj, const char* key)
 	return n;
 }
 
+constexpr size_t CopyBlockBytes = 1024 * 1024;
+constexpr int MaxCollectionFrames = 10000;
+constexpr int MaxFrameTriggers = 10000;
+
+void validate_shared_clock_frame(const CollectionFrame& frame, const CollectionFrame* previous,
+	const char* reason)
+{
+	// Format v2 (inter_frame_timing == "source_samples") models every window as
+	// sliced from one uninterrupted hardware clock, so sample_origin must be
+	// strictly increasing without uint64_t overflow and samplerate must stay constant.
+	require(frame.origin <= UINT64_MAX - frame.samples &&
+		(!previous || (frame.origin > previous->origin && frame.samplerate == previous->samplerate)),
+		reason);
+}
+
 QString outcome(const QJsonObject& obj)
 {
+	static const QStringList valid_outcomes{
+		"complete", "stopped", "error", "unknown", "disconnected", "timeout", "unstable"
+	};
 	const auto text = obj.value("status").toString();
-	require(QStringList{"complete", "stopped", "error", "unknown", "disconnected", "timeout", "unstable"}.contains(text),
+	require(valid_outcomes.contains(text),
 		"Invalid capture collection outcome.");
 	return text;
 }
@@ -75,6 +93,9 @@ bool CaptureCollection::is_collection(const QString& path)
 
 CaptureCollection CaptureCollection::read(const QString& path)
 {
+	static const QRegularExpression sha256_re("^[0-9a-f]{64}$");
+	static const QRegularExpression trigger_re("^[+-]?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$");
+
 	auto zip = open_zip(path, ZIP_RDONLY);
 	zip_stat_t stat;
 	require(zip_stat(zip.get(), Manifest, 0, &stat) == 0 && stat.size <= MaxManifest,
@@ -96,7 +117,7 @@ CaptureCollection CaptureCollection::read(const QString& path)
 		"Unsupported capture collection format.");
 	require(obj.value("frames").isArray(), "Missing capture collection frames.");
 	const auto items = obj.value("frames").toArray();
-	require(!items.isEmpty() && items.size() <= 10000 &&
+	require(!items.isEmpty() && items.size() <= MaxCollectionFrames &&
 		zip_get_num_entries(zip.get(), 0) == items.size() + 1,
 		"Invalid capture collection frame count.");
 	CaptureCollection result;
@@ -112,30 +133,29 @@ CaptureCollection CaptureCollection::read(const QString& path)
 		if (shared_clock) {
 			frame.has_origin = true;
 			frame.origin = number(item, "sample_origin");
-			require(frame.origin <= UINT64_MAX - frame.samples &&
-				(result.frames.empty() || (frame.origin > result.frames.back().origin &&
-				 frame.samplerate == result.frames.back().samplerate)),
+			validate_shared_clock_frame(frame,
+				result.frames.empty() ? nullptr : &result.frames.back(),
 				"Inconsistent collection source sample clock.");
 		}
 		frame.status = outcome(item);
 		frame.error = item.value("error").toString();
 		frame.sha256 = item.value("sha256").toString();
 		require(frame.samples && frame.samplerate && frame.bytes && frame.bytes <= MaxMember &&
-			QRegularExpression("^[0-9a-f]{64}$").match(frame.sha256).hasMatch(),
+			sha256_re.match(frame.sha256).hasMatch(),
 			"Invalid capture collection frame metadata.");
 		require(item.value("member") == member_name(result.frames.size()),
 			"Invalid capture collection member name.");
 		require(item.value("triggers").isArray(), "Invalid collection trigger list.");
 		const auto triggers = item.value("triggers").toArray();
-		require(triggers.size() <= 10000, "Too many trigger positions.");
+		require(triggers.size() <= MaxFrameTriggers, "Too many trigger positions.");
 		for (const auto& trigger : triggers) {
-			require(trigger.isString() && trigger.toString().size() <= 128 &&
-				QRegularExpression("^[+-]?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$")
-				.match(trigger.toString()).hasMatch(), "Invalid collection trigger position.");
-			const util::Timestamp time(trigger.toString().toStdString());
+			const QString trigger_str = trigger.toString();
+			require(trigger.isString() && trigger_str.size() <= 128 &&
+				trigger_re.match(trigger_str).hasMatch(), "Invalid collection trigger position.");
+			const util::Timestamp time(trigger_str.toStdString());
 			require(time >= 0 && time <= util::Timestamp(frame.samples) / frame.samplerate,
 				"Collection trigger outside frame.");
-			frame.triggers.append(trigger.toString());
+			frame.triggers.append(trigger_str);
 		}
 		const auto name = member_name(result.frames.size()).toUtf8();
 		require(zip_stat(zip.get(), name.constData(), 0, &stat) == 0 && stat.size == frame.bytes,
@@ -156,7 +176,7 @@ void CaptureCollection::extract(const QString& path, size_t index,
 	QSaveFile output(destination);
 	require(output.open(QIODevice::WriteOnly), "Cannot create temporary capture frame.");
 	QCryptographicHash hash(QCryptographicHash::Sha256);
-	QByteArray block(1024 * 1024, Qt::Uninitialized);
+	QByteArray block(CopyBlockBytes, Qt::Uninitialized);
 	uint64_t count = 0;
 	while (true) {
 		check_cancel(cancel);
@@ -166,7 +186,11 @@ void CaptureCollection::extract(const QString& path, size_t index,
 		count += n;
 		require(count <= frame.bytes && output.write(block.constData(), n) == n,
 			"Cannot extract capture collection frame.");
-		hash.addData(block.constData(), n);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 3, 0)
+		hash.addData(QByteArrayView(block.constData(), n));
+#else
+		hash.addData(block.constData(), int(n));
+#endif
 	}
 	require(count == frame.bytes && hash.result().toHex() == frame.sha256.toLatin1(),
 		"Capture collection checksum mismatch.");
@@ -177,14 +201,20 @@ void CaptureCollection::extract(const QString& path, size_t index,
 void CaptureCollection::write(const QString& path, const QStringList& members,
 	const std::atomic_bool& cancel, const std::function<void(int, int)>& progress) const
 {
-	require(!frames.empty() && frames.size() <= 10000 && int(frames.size()) == members.size(),
+	require(!frames.empty() && frames.size() <= size_t(MaxCollectionFrames) &&
+		int(frames.size()) == members.size(),
 		"Invalid collection save request.");
+	// Stage the complete ZIP in QTemporaryDir before copying into QSaveFile:
+	// libzip cannot write directly through QSaveFile, and QTemporaryDir may
+	// live on another filesystem, so copying into QSaveFile guarantees atomic
+	// replacement of `path` without leaving a half-written archive on failure.
 	QTemporaryDir directory;
 	require(directory.isValid(), "Cannot create collection staging directory.");
 	const auto temporary = directory.filePath("collection.zip");
 	auto zip = open_zip(temporary, ZIP_CREATE | ZIP_TRUNCATE);
 	QJsonArray entries;
 	const bool shared_clock = frames.front().has_origin;
+	QByteArray copy_buffer(CopyBlockBytes, Qt::Uninitialized);
 	for (size_t i = 0; i < frames.size(); ++i) {
 		check_cancel(cancel);
 		QFile file(members.at(i));
@@ -193,15 +223,20 @@ void CaptureCollection::write(const QString& path, const QStringList& members,
 		QCryptographicHash hash(QCryptographicHash::Sha256);
 		while (!file.atEnd()) {
 			check_cancel(cancel);
-			const auto block = file.read(1024 * 1024);
-			require(!block.isEmpty(), "Cannot checksum staged capture frame.");
-			hash.addData(block);
+			const qint64 n = file.read(copy_buffer.data(), copy_buffer.size());
+			require(n > 0, "Cannot checksum staged capture frame.");
+#if QT_VERSION >= QT_VERSION_CHECK(6, 3, 0)
+			hash.addData(QByteArrayView(copy_buffer.constData(), n));
+#else
+			hash.addData(copy_buffer.constData(), int(n));
+#endif
 		}
 		const auto& frame = frames[i];
-		require(frame.has_origin == shared_clock && (!shared_clock ||
-			(frame.origin <= UINT64_MAX - frame.samples && (!i ||
-			 (frame.origin > frames[i-1].origin && frame.samplerate == frames[i-1].samplerate)))),
+		require(frame.has_origin == shared_clock,
 			"Cannot mix independent acquisitions and shared-clock windows.");
+		if (shared_clock)
+			validate_shared_clock_frame(frame, i ? &frames[i - 1] : nullptr,
+				"Cannot mix independent acquisitions and shared-clock windows.");
 		QJsonArray triggers;
 		for (const auto& t : frame.triggers) triggers.append(t);
 		QJsonObject entry_info{{"member", member_name(i)},
@@ -215,6 +250,7 @@ void CaptureCollection::write(const QString& path, const QStringList& members,
 		require(source, "Cannot stage capture frame ZIP member.");
 		const auto entry = zip_file_add(zip.get(), member_name(i).toUtf8().constData(), source, ZIP_FL_ENC_UTF_8);
 		if (entry < 0) { zip_source_free(source); throw std::runtime_error("Cannot add capture frame."); }
+		// Individual .sr members are already ZIP-compressed; store them verbatim.
 		require(zip_set_file_compression(zip.get(), entry, ZIP_CM_STORE, 0) == 0,
 			"Cannot configure capture collection compression.");
 		progress(int(i + 1), int(frames.size()) + 1);
@@ -239,8 +275,8 @@ void CaptureCollection::write(const QString& path, const QStringList& members,
 		"Cannot open capture collection destination.");
 	while (!input.atEnd()) {
 		check_cancel(cancel);
-		const auto block = input.read(1024 * 1024);
-		require(!block.isEmpty() && output.write(block) == block.size(),
+		const qint64 n = input.read(copy_buffer.data(), copy_buffer.size());
+		require(n > 0 && output.write(copy_buffer.constData(), n) == n,
 			"Cannot write capture collection destination.");
 	}
 	check_cancel(cancel);

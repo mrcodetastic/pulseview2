@@ -79,7 +79,15 @@ public:
 	void set_expression(QString expression);
 
 private:
-	void set_error(uint8_t type, QString msg);
+	enum class ErrorType : uint8_t {
+		None = 0,
+		EmptyExpression = 1,
+		Expression = 2,
+		InvalidSignal = 3,
+		Enable = 4
+	};
+
+	void set_error(ErrorType type, QString msg);
 
 	/**
 	 * Returns the number of samples that can be worked on,
@@ -124,7 +132,7 @@ private:
 
 	QString expression_;
 
-	uint8_t error_type_;
+	ErrorType error_type_;
 
 	mutable mutex input_mutex_;
 	mutable condition_variable gen_input_cond_;
@@ -138,6 +146,7 @@ private:
 	double exprtk_current_time_, exprtk_current_sample_;
 
 	fnc_sample<double>* fnc_sample_;
+	std::vector<float> sample_buffer_;
 
 	// Give sig_sample access to the private helper functions
 	friend struct fnc_sample<double>;

@@ -744,12 +744,15 @@ void Session::set_device(shared_ptr<devices::Device> device)
 				feed_in_frame_begin();
 			} else {
 				std::vector<util::Timestamp> triggers;
-				if (acquisition_received_samples_)
+				if (acquisition_received_samples_) {
+					const util::Timestamp segment_duration =
+						util::Timestamp(get_segment_sample_count(highest_segment_id_)) / get_samplerate();
 					for (const auto& text : device_->frame_triggers()) {
 						const util::Timestamp time(text);
-						if (time <= util::Timestamp(get_segment_sample_count(highest_segment_id_)) / get_samplerate())
+						if (time <= segment_duration)
 							triggers.push_back(time);
 					}
+				}
 				restore_segment_triggers(triggers);
 				uint64_t origin;
 				if (acquisition_received_samples_ && device_->frame_origin(origin)) set_segment_origin(origin);
@@ -1527,21 +1530,9 @@ void Session::set_capture_state(capture_state state)
 
 void Session::update_signals()
 {
-	if (!device_) {
-		signalbases_.clear();
-		logic_data_.reset();
-		for (shared_ptr<views::ViewBase>& view : views_) {
-			view->clear_signalbases();
-#ifdef ENABLE_DECODE
-			view->clear_decode_signals();
-#endif
-		}
-		return;
-	}
-
 	lock_guard<recursive_mutex> lock(data_mutex_);
 
-	const shared_ptr<sigrok::Device> sr_dev = device_->device();
+	const shared_ptr<sigrok::Device> sr_dev = device_ ? device_->device() : nullptr;
 	if (!sr_dev) {
 		signalbases_.clear();
 		logic_data_.reset();
@@ -1562,16 +1553,12 @@ void Session::update_signals()
 			return channel->type() == sigrok::ChannelType::LOGIC; });
 
 	// Create a common data container for the logic signalbases
-	{
-		lock_guard<recursive_mutex> data_lock(data_mutex_);
-
-		if (logic_channel_count == 0) {
-			logic_data_.reset();
-		} else if (!logic_data_ ||
-			logic_data_->num_channels() != logic_channel_count) {
-			logic_data_.reset(new data::Logic(logic_channel_count));
-			assert(logic_data_);
-		}
+	if (logic_channel_count == 0) {
+		logic_data_.reset();
+	} else if (!logic_data_ ||
+		logic_data_->num_channels() != logic_channel_count) {
+		logic_data_.reset(new data::Logic(logic_channel_count));
+		assert(logic_data_);
 	}
 
 	// Create signalbases if necessary
@@ -1754,56 +1741,62 @@ try
 	if (active_window_mode_) {
 		sample_stream_windows();
 	} else {
-	unsigned completed = 0;
-	series_frame_ = active_capture_count_ > 1;
-	for (unsigned run = 0; run < active_capture_count_ && !stop_requested(); ++run) {
-		if (series_frame_) {
-			{ lock_guard<recursive_mutex> lock(data_mutex_);
-			  capture_outcome_.clear(); capture_error_.clear(); }
-			feed_in_frame_begin();
+		// In multi-run capture series (active_capture_count_ > 1), series_frame_
+		// synthesizes frame boundaries around each individual acquisition so all
+		// runs become segments in one session and SR_DF_END seals each segment.
+		unsigned completed = 0;
+		series_frame_ = active_capture_count_ > 1;
+		for (unsigned run = 0; run < active_capture_count_ && !stop_requested(); ++run) {
+			if (series_frame_) {
+				{ lock_guard<recursive_mutex> lock(data_mutex_);
+				  capture_outcome_.clear(); capture_error_.clear(); }
+				feed_in_frame_begin();
+			}
+			set_capture_state((device_->session()->trigger() || has_extended_trigger()) ?
+				AwaitingTrigger : Running);
+			capture_series_progress(run + 1, active_capture_count_);
+			if (stop_requested()) break;
+			acquisition_received_samples_ = false;
+			acquisition_end_received_ = false;
+			device_->start();
+			if (stop_requested()) device_->stop();
+			try { device_->run(); }
+			catch (const QString& error) { throw std::runtime_error(error.toStdString()); }
+			if (!window_packet_error_.isEmpty()) {
+				lock_guard<recursive_mutex> lock(data_mutex_);
+				capture_outcome_ = "error"; capture_error_ = window_packet_error_;
+			}
+			if (series_frame_ && !acquisition_end_received_ && !stop_requested()) {
+				lock_guard<recursive_mutex> lock(data_mutex_);
+				capture_outcome_ = "error";
+				capture_error_ = tr("The acquisition ended without an end marker; the capture series was stopped.");
+			}
+			if (series_frame_ && frame_began_) feed_in_frame_end();
+			if (series_frame_) {
+				{ lock_guard<recursive_mutex> lock(data_mutex_);
+				  if (capture_outcome_.isEmpty())
+					  capture_outcome_ = stop_requested() ? "stopped" : "complete"; }
+				record_segment_outcome();
+			}
+			QString run_outcome = capture_outcome();
+			if (active_capture_count_ > 1 && !acquisition_received_samples_ && !stop_requested() &&
+					(run_outcome.isEmpty() || run_outcome == "complete")) {
+				lock_guard<recursive_mutex> lock(data_mutex_);
+				capture_outcome_ = "error";
+				capture_error_ = tr("The acquisition ended without sample data; the capture series was stopped.");
+				run_outcome = capture_outcome_;
+			}
+			++completed;
+			if (stop_requested() || (!run_outcome.isEmpty() && run_outcome != "complete"))
+				break;
 		}
-		set_capture_state((device_->session()->trigger() || has_extended_trigger()) ?
-			AwaitingTrigger : Running);
-		capture_series_progress(run + 1, active_capture_count_);
-		if (stop_requested()) break;
-		acquisition_received_samples_ = false;
-		acquisition_end_received_ = false;
-		device_->start();
-		if (stop_requested()) device_->stop();
-		try { device_->run(); }
-		catch (const QString& error) { throw std::runtime_error(error.toStdString()); }
-		if (!window_packet_error_.isEmpty()) {
+		series_frame_ = false;
+		const QString final_outcome = capture_outcome();
+		if (active_capture_count_ > 1 && completed < active_capture_count_ &&
+				(final_outcome.isEmpty() || final_outcome == "complete")) {
 			lock_guard<recursive_mutex> lock(data_mutex_);
-			capture_outcome_ = "error"; capture_error_ = window_packet_error_;
+			capture_outcome_ = "stopped";
 		}
-		if (series_frame_ && !acquisition_end_received_ && !stop_requested()) {
-			lock_guard<recursive_mutex> lock(data_mutex_);
-			capture_outcome_ = "error";
-			capture_error_ = tr("The acquisition ended without an end marker; the capture series was stopped.");
-		}
-		if (series_frame_ && frame_began_) feed_in_frame_end();
-		if (series_frame_) {
-			{ lock_guard<recursive_mutex> lock(data_mutex_);
-			  if (capture_outcome_.isEmpty())
-				  capture_outcome_ = stop_requested() ? "stopped" : "complete"; }
-			record_segment_outcome();
-		}
-		if (active_capture_count_ > 1 && !acquisition_received_samples_ && !stop_requested() &&
-				(capture_outcome().isEmpty() || capture_outcome() == "complete")) {
-			lock_guard<recursive_mutex> lock(data_mutex_);
-			capture_outcome_ = "error";
-			capture_error_ = tr("The acquisition ended without sample data; the capture series was stopped.");
-		}
-		++completed;
-		if (stop_requested() || (!capture_outcome().isEmpty() && capture_outcome() != "complete"))
-			break;
-	}
-	series_frame_ = false;
-	if (active_capture_count_ > 1 && completed < active_capture_count_ &&
-			(capture_outcome().isEmpty() || capture_outcome() == "complete")) {
-		lock_guard<recursive_mutex> lock(data_mutex_);
-		capture_outcome_ = "stopped";
-	}
 	}
 	set_capture_state(Stopped);
 
@@ -1937,6 +1930,8 @@ void Session::sample_stream_windows()
 	series_frame_ = false;
 	bool started = false, ran = false;
 	try {
+		// Clear hardware triggers and suspend sample/time limits so the device
+		// streams continuously while StreamWindows slices triggered windows in software.
 		backend->set_trigger(nullptr);
 		restore_limits = device_->suspend_capture_limits();
 		capture_series_progress(1, active_capture_count_);
@@ -1977,6 +1972,8 @@ void Session::sample_stream_windows()
 		}
 	} catch (...) {
 		const auto failure = std::current_exception();
+		// If start() succeeded before an exception aborted run(), drain and tear
+		// down the libsigrok session before restoring device limits/triggers.
 		if (started && !ran) {
 			try { device_->stop(); device_->run(); } catch (...) { }
 		}
@@ -1990,6 +1987,9 @@ void Session::sample_stream_windows()
 
 void Session::accept_stream_window(data::StreamWindows::Window&& window)
 {
+	// Temporarily swap capture_outcome_/capture_error_ to "complete" around
+	// feed_in_frame_begin/end so record_segment_outcome() stamps each completed
+	// window independently without clobbering the overall stream outcome.
 	const auto outcome = capture_outcome(), error = capture_error();
 	{
 		lock_guard<recursive_mutex> lock(data_mutex_);
@@ -2212,6 +2212,18 @@ void Session::feed_in_frame_begin()
 	acquisition_received_samples_ = false;
 }
 
+void Session::complete_active_segments_locked()
+{
+	if (cur_logic_segment_)
+		cur_logic_segment_->set_complete();
+
+	for (auto& entry : cur_analog_segments_)
+		entry.second->set_complete();
+
+	cur_logic_segment_.reset();
+	cur_analog_segments_.clear();
+}
+
 void Session::feed_in_frame_end()
 {
 	if (!frame_began_)
@@ -2220,17 +2232,7 @@ void Session::feed_in_frame_end()
 
 	{
 		lock_guard<recursive_mutex> lock(data_mutex_);
-
-		if (cur_logic_segment_)
-			cur_logic_segment_->set_complete();
-
-		for (auto& entry : cur_analog_segments_) {
-			shared_ptr<data::AnalogSegment> segment = entry.second;
-			segment->set_complete();
-		}
-
-		cur_logic_segment_.reset();
-		cur_analog_segments_.clear();
+		complete_active_segments_locked();
 	}
 
 	frame_began_ = false;
@@ -2270,34 +2272,37 @@ void Session::feed_in_logic_payload(shared_ptr<sigrok::Logic> logic)
 			// Do nothing
 		}
 
-	lock_guard<recursive_mutex> lock(data_mutex_);
+	{
+		lock_guard<recursive_mutex> lock(data_mutex_);
 
-	if (!logic_data_) {
-		// The only reason logic_data_ would not have been created is
-		// if it was not possible to determine the signals when the
-		// device was created.
-		update_signals();
+		if (!logic_data_) {
+			// The only reason logic_data_ would not have been created is
+			// if it was not possible to determine the signals when the
+			// device was created.
+			update_signals();
+		}
+
+		if (!cur_logic_segment_) {
+			// This could be the first packet after a trigger
+			set_capture_state(Running);
+
+			// Create a new data segment
+			cur_logic_segment_ = make_shared<data::LogicSegment>(
+				*logic_data_, logic_data_->get_segment_count(),
+				logic->unit_size(), cur_samplerate_);
+			logic_data_->push_segment(cur_logic_segment_);
+
+			signal_new_segment();
+		}
+
+		cur_logic_segment_->append_payload(logic);
+		acquisition_received_samples_ = true;
+
+		segment_sample_count_[highest_segment_id_] =
+			max(segment_sample_count_[highest_segment_id_], cur_logic_segment_->get_sample_count());
 	}
 
-	if (!cur_logic_segment_) {
-		// This could be the first packet after a trigger
-		set_capture_state(Running);
-
-		// Create a new data segment
-		cur_logic_segment_ = make_shared<data::LogicSegment>(
-			*logic_data_, logic_data_->get_segment_count(),
-			logic->unit_size(), cur_samplerate_);
-		logic_data_->push_segment(cur_logic_segment_);
-
-		signal_new_segment();
-	}
-
-	cur_logic_segment_->append_payload(logic);
-	acquisition_received_samples_ = true;
-
-	segment_sample_count_[highest_segment_id_] =
-		max(segment_sample_count_[highest_segment_id_], cur_logic_segment_->get_sample_count());
-
+	// Emit outside data_mutex_ to minimize lock contention with UI/decoder slots.
 	data_received();
 }
 
@@ -2316,65 +2321,72 @@ void Session::feed_in_analog(shared_ptr<sigrok::Analog> analog)
 			// Do nothing
 		}
 
-	lock_guard<recursive_mutex> lock(data_mutex_);
-
+	// Convert packet samples to float into our reusable scratch buffer BEFORE
+	// acquiring data_mutex_ so UI repaints aren't blocked during conversion.
 	const vector<shared_ptr<Channel>> channels = analog->channels();
-	bool sweep_beginning = false;
+	const size_t total_floats = static_cast<size_t>(analog->num_samples()) * channels.size();
+	if (analog_feed_buffer_.size() < total_floats)
+		analog_feed_buffer_.resize(total_floats);
+	analog->get_data_as_float(analog_feed_buffer_.data());
 
-	unique_ptr<float[]> data(new float[analog->num_samples() * channels.size()]);
-	analog->get_data_as_float(data.get());
+	{
+		lock_guard<recursive_mutex> lock(data_mutex_);
 
-	if (signalbases_.empty())
-		update_signals();
+		bool sweep_beginning = false;
 
-	float *channel_data = data.get();
-	for (auto& channel : channels) {
-		shared_ptr<data::AnalogSegment> segment;
+		if (signalbases_.empty())
+			update_signals();
 
-		// Try to get the segment of the channel
-		const map< shared_ptr<Channel>, shared_ptr<data::AnalogSegment> >::
-			iterator iter = cur_analog_segments_.find(channel);
-		if (iter != cur_analog_segments_.end())
-			segment = (*iter).second;
-		else {
-			// If no segment was found, this means we haven't
-			// created one yet. i.e. this is the first packet
-			// in the sweep containing this segment.
-			sweep_beginning = true;
+		float *channel_data = analog_feed_buffer_.data();
+		for (auto& channel : channels) {
+			shared_ptr<data::AnalogSegment> segment;
 
-			// Find the analog data associated with the channel
-			shared_ptr<data::SignalBase> base = signalbase_from_channel(channel);
-			assert(base);
+			// Try to get the segment of the channel
+			const map< shared_ptr<Channel>, shared_ptr<data::AnalogSegment> >::
+				iterator iter = cur_analog_segments_.find(channel);
+			if (iter != cur_analog_segments_.end())
+				segment = (*iter).second;
+			else {
+				// If no segment was found, this means we haven't
+				// created one yet. i.e. this is the first packet
+				// in the sweep containing this segment.
+				sweep_beginning = true;
 
-			shared_ptr<data::Analog> data(base->analog_data());
-			assert(data);
+				// Find the analog data associated with the channel
+				shared_ptr<data::SignalBase> base = signalbase_from_channel(channel);
+				assert(base);
 
-			// Create a segment, keep it in the maps of channels
-			segment = make_shared<data::AnalogSegment>(
-				*data, data->get_segment_count(), cur_samplerate_);
-			cur_analog_segments_[channel] = segment;
+				shared_ptr<data::Analog> data(base->analog_data());
+				assert(data);
 
-			// Push the segment into the analog data.
-			data->push_segment(segment);
+				// Create a segment, keep it in the maps of channels
+				segment = make_shared<data::AnalogSegment>(
+					*data, data->get_segment_count(), cur_samplerate_);
+				cur_analog_segments_[channel] = segment;
 
-			signal_new_segment();
+				// Push the segment into the analog data.
+				data->push_segment(segment);
+
+				signal_new_segment();
+			}
+
+			assert(segment);
+
+			// Append the samples in the segment
+			segment->append_interleaved_samples(channel_data++, analog->num_samples(),
+				channels.size());
+
+			segment_sample_count_[highest_segment_id_] =
+				max(segment_sample_count_[highest_segment_id_], segment->get_sample_count());
 		}
 
-		assert(segment);
-
-		// Append the samples in the segment
-		segment->append_interleaved_samples(channel_data++, analog->num_samples(),
-			channels.size());
-
-		segment_sample_count_[highest_segment_id_] =
-			max(segment_sample_count_[highest_segment_id_], segment->get_sample_count());
+		if (sweep_beginning) {
+			// This could be the first packet after a trigger
+			set_capture_state(Running);
+		}
 	}
 
-	if (sweep_beginning) {
-		// This could be the first packet after a trigger
-		set_capture_state(Running);
-	}
-
+	// Emit outside data_mutex_ to minimize lock contention with UI/decoder slots.
 	data_received();
 }
 
@@ -2388,62 +2400,52 @@ void Session::data_feed_in(shared_ptr<sigrok::Device> device,
 	assert(packet);
 
 	try {
-	switch (packet->type()->id()) {
-	case SR_DF_HEADER:
-		feed_in_header();
-		break;
+		switch (packet->type()->id()) {
+		case SR_DF_HEADER:
+			feed_in_header();
+			break;
 
-	case SR_DF_META:
-		feed_in_meta(dynamic_pointer_cast<Meta>(packet->payload()));
-		break;
+		case SR_DF_META:
+			feed_in_meta(dynamic_pointer_cast<Meta>(packet->payload()));
+			break;
 
-	case SR_DF_TRIGGER:
-		if (!active_window_mode_) feed_in_trigger();
-		break;
+		case SR_DF_TRIGGER:
+			if (!active_window_mode_) feed_in_trigger();
+			break;
 
-	case SR_DF_LOGIC:
-		feed_in_logic(dynamic_pointer_cast<Logic>(packet->payload()));
-		break;
+		case SR_DF_LOGIC:
+			feed_in_logic(dynamic_pointer_cast<Logic>(packet->payload()));
+			break;
 
-	case SR_DF_ANALOG:
-		if (active_window_mode_) throw std::runtime_error("Analog packets cannot be used for digital Stream windows.");
-		feed_in_analog(dynamic_pointer_cast<Analog>(packet->payload()));
-		break;
+		case SR_DF_ANALOG:
+			if (active_window_mode_) throw std::runtime_error("Analog packets cannot be used for digital Stream windows.");
+			feed_in_analog(dynamic_pointer_cast<Analog>(packet->payload()));
+			break;
 
-	case SR_DF_FRAME_BEGIN:
-		if (!active_window_mode_) feed_in_frame_begin();
-		break;
+		case SR_DF_FRAME_BEGIN:
+			if (!active_window_mode_) feed_in_frame_begin();
+			break;
 
-	case SR_DF_FRAME_END:
-		if (!active_window_mode_) feed_in_frame_end();
-		break;
+		case SR_DF_FRAME_END:
+			if (!active_window_mode_) feed_in_frame_end();
+			break;
 
-	case SR_DF_END:
-		acquisition_end_received_ = true;
-		if (active_window_mode_) break;
-		if (series_frame_) { feed_in_frame_end(); break; }
-		// Strictly speaking, this is performed when a frame end marker was
-		// received, so there's no point doing this again. However, not all
-		// devices use frames, and for those devices, we need to do it here.
-		{
-			lock_guard<recursive_mutex> lock(data_mutex_);
-
-			if (cur_logic_segment_)
-				cur_logic_segment_->set_complete();
-
-			for (auto& entry : cur_analog_segments_) {
-				shared_ptr<data::AnalogSegment> segment = entry.second;
-				segment->set_complete();
+		case SR_DF_END:
+			acquisition_end_received_ = true;
+			if (active_window_mode_) break;
+			if (series_frame_) { feed_in_frame_end(); break; }
+			// Strictly speaking, this is performed when a frame end marker was
+			// received, so there's no point doing this again. However, not all
+			// devices use frames, and for those devices, we need to do it here.
+			{
+				lock_guard<recursive_mutex> lock(data_mutex_);
+				complete_active_segments_locked();
 			}
+			break;
 
-			cur_logic_segment_.reset();
-			cur_analog_segments_.clear();
+		default:
+			break;
 		}
-		break;
-
-	default:
-		break;
-	}
 	} catch (...) {
 		// Never unwind through libsigrok's noexcept C datafeed trampoline.
 		QString problem;

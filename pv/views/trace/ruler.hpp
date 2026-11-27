@@ -200,6 +200,7 @@ private:
 	 * @brief Save the place (x only) where the user has clicked to open the popup menu
 	 */
 	uint32_t context_menu_x_pos_;
+	int last_hover_x_ = -1;
 };
 
 } // namespace trace

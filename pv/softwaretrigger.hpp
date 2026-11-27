@@ -57,6 +57,12 @@ inline data::WindowTriggerStage compile_software_trigger(const SoftwareTrigger& 
 			data::WindowPulseWidth pulse;
 			pulse.channel = c.channel;
 			pulse.high = c.kind == SoftwareTriggerKind::HighPulse;
+			// Convert time bounds (ns) into inclusive integer sample bounds
+			// [minimum, maximum]:
+			// - Less (< T): largest integer count strictly below T = ceil(T) - 1
+			//   (if ceil(T) <= 1, maximum becomes 0 < minimum, rejecting impossible bounds).
+			// - Greater (> T): smallest integer count strictly above T = floor(T) + 1.
+			// - Between ([T1, T2]): [max(1, ceil(T1)), floor(T2)].
 			switch (c.comparison) {
 			case PulseComparison::Less:
 				pulse.maximum = pulse_time_samples(c.lower_ns, rate, true);

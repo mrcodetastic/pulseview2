@@ -330,13 +330,18 @@ private:
 
 	shared_ptr<pv::toolbars::MainBar> main_bar_;
 
-	mutable mutex sampling_mutex_; //!< Protects access to capture_state_
+	void complete_active_segments_locked();
+
+	// Locking invariant: whenever both mutexes are needed, ALWAYS acquire
+	// data_mutex_ before sampling_mutex_ (never the reverse) to prevent deadlock.
+	mutable mutex sampling_mutex_; //!< Protects capture_state_ and stop_requested_
 	capture_state capture_state_;
 	bool stop_requested_; //!< Protected by sampling_mutex_
 	std::atomic_uint captures_per_run_{1};
 	std::atomic_bool stream_windows_enabled_{false};
 	SoftwareTrigger software_trigger_;
 	std::atomic_uint window_pretrigger_percent_{50};
+	// Sampling-thread-only stream-window capture state (reset on each run).
 	bool active_window_mode_ = false;
 	uint64_t window_depth_ = 0, window_pre_ = 0, window_rate_ = 0;
 	std::vector<data::WindowTriggerStage> window_stages_;
@@ -351,7 +356,7 @@ private:
 	bool acquisition_end_received_ = false;
 	struct SegmentOutcome { QString status, error; };
 	vector<SegmentOutcome> segment_outcomes_; // Protected by data_mutex_.
-	QString capture_outcome_, capture_error_;
+	QString capture_outcome_, capture_error_; // Protected by data_mutex_.
 	std::atomic_bool device_reconnect_needed_{false};
 	RecentDevice last_hardware_device_;
 
@@ -369,6 +374,8 @@ private:
 	shared_ptr<data::LogicSegment> cur_logic_segment_;
 	map< shared_ptr<sigrok::Channel>, shared_ptr<data::AnalogSegment> >
 		cur_analog_segments_;
+	// Reusable scratch buffer for analog->get_data_as_float() on sampling_thread_.
+	vector<float> analog_feed_buffer_;
 	int32_t highest_segment_id_;
 	vector<uint64_t> segment_sample_count_;
 

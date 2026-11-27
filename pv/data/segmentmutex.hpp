@@ -9,7 +9,11 @@
 namespace pv {
 namespace data {
 
-/* In MinGW's statically initialized libstdc++ mutex branch, the default
+/* Derived segments (LogicSegment, AnalogSegment) lock mutex_ across compound
+ * operations that invoke base Segment helpers (which also lock mutex_), so
+ * recursive locking is required.
+ *
+ * In MinGW's statically initialized libstdc++ mutex branch, the default
  * destructor is trivial. Winpthreads lazily allocates an event on first lock,
  * which still needs pthread_mutex_destroy. Restrict that extra destruction to
  * this implementation; other platforms retain standard destruction.

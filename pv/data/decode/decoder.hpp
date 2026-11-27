@@ -156,6 +156,8 @@ private Q_SLOTS:
 	void on_class_visibility_changed();
 
 private:
+	GHashTable* build_options_hash() const;
+
 	const srd_decoder* const srd_decoder_;
 	uint8_t stack_level_;
 

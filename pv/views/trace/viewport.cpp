@@ -126,61 +126,46 @@ bool Viewport::touch_event(QTouchEvent *event)
 {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 	QList<QEventPoint> touchPoints = event->points();
-#else
-	QList<QTouchEvent::TouchPoint> touchPoints = event->touchPoints();
-#endif
-
 	if (touchPoints.count() != 2) {
 		pinch_zoom_active_ = false;
 		return false;
 	}
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-	if (event->device()->type() == QInputDevice::DeviceType::TouchPad) {
+	if (event->device()->type() == QInputDevice::DeviceType::TouchPad)
 		return false;
-	}
-
-	const QEventPoint &touchPoint0 = touchPoints.first();
-	const QEventPoint &touchPoint1 = touchPoints.last();
-
-	if (!pinch_zoom_active_ ||
-		(event->touchPointStates() & QEventPoint::Pressed)) {
-		pinch_offset0_ = view_.idle_time_map().to_display(view_.pixel_to_time(touchPoint0.position().x()));
-		pinch_offset1_ = view_.idle_time_map().to_display(view_.pixel_to_time(touchPoint1.position().x()));
-		pinch_zoom_active_ = true;
-	}
-
-	double w = touchPoint1.position().x() - touchPoint0.position().x();
-	if (abs(w) >= 1.0) {
-		const double scale =
-			abs((pinch_offset1_ - pinch_offset0_) / w).convert_to<double>();
-		const auto offset = view_.idle_time_map().to_real(pinch_offset0_ - touchPoint0.position().x() * scale);
-		if (scale > 0)
-			view_.set_scale_offset(scale, offset);
-	}
+	const auto &touchPoint0 = touchPoints.first();
+	const auto &touchPoint1 = touchPoints.last();
+	const double x0 = touchPoint0.position().x();
+	const double x1 = touchPoint1.position().x();
+	const bool pressed = (event->touchPointStates() & QEventPoint::Pressed);
 #else
-	if (event->device()->type() == QTouchDevice::TouchPad) {
+	QList<QTouchEvent::TouchPoint> touchPoints = event->touchPoints();
+	if (touchPoints.count() != 2) {
+		pinch_zoom_active_ = false;
 		return false;
 	}
+	if (event->device()->type() == QTouchDevice::TouchPad)
+		return false;
+	const auto &touchPoint0 = touchPoints.first();
+	const auto &touchPoint1 = touchPoints.last();
+	const double x0 = touchPoint0.pos().x();
+	const double x1 = touchPoint1.pos().x();
+	const bool pressed = (event->touchPointStates() & Qt::TouchPointPressed);
+#endif
 
-	const QTouchEvent::TouchPoint &touchPoint0 = touchPoints.first();
-	const QTouchEvent::TouchPoint &touchPoint1 = touchPoints.last();
-
-	if (!pinch_zoom_active_ ||
-	    (event->touchPointStates() & Qt::TouchPointPressed)) {
-		pinch_offset0_ = view_.idle_time_map().to_display(view_.pixel_to_time(touchPoint0.pos().x()));
-		pinch_offset1_ = view_.idle_time_map().to_display(view_.pixel_to_time(touchPoint1.pos().x()));
+	if (!pinch_zoom_active_ || pressed) {
+		pinch_offset0_ = view_.idle_time_map().to_display(view_.pixel_to_time(x0));
+		pinch_offset1_ = view_.idle_time_map().to_display(view_.pixel_to_time(x1));
 		pinch_zoom_active_ = true;
 	}
 
-	double w = touchPoint1.pos().x() - touchPoint0.pos().x();
+	const double w = x1 - x0;
 	if (abs(w) >= 1.0) {
 		const double scale =
 			abs((pinch_offset1_ - pinch_offset0_) / w).convert_to<double>();
-		const auto offset = view_.idle_time_map().to_real(pinch_offset0_ - touchPoint0.pos().x() * scale);
+		const auto offset = view_.idle_time_map().to_real(pinch_offset0_ - x0 * scale);
 		if (scale > 0)
 			view_.set_scale_offset(scale, offset);
 	}
-#endif
 
 	if (event->touchPointStates() & Qt::TouchPointReleased) {
 		pinch_zoom_active_ = false;
@@ -241,13 +226,18 @@ void Viewport::paintEvent(QPaintEvent*)
 			(r.get()->*(*paint_func))(p, row_pp);
 	}
 
-	for (const auto gap : view_.visible_idle_gaps(width())) {
-		const double x1 = std::max(0.0, view_.time_to_pixel(gap->begin));
-		const double x2 = std::min(double(width()), view_.time_to_pixel(gap->end));
-		p.fillRect(QRectF(x1, 0, x2 - x1, height()), QColor(150, 130, 60, 22));
-		p.setPen(QPen(QColor(150, 130, 60, 140), 1, Qt::DashLine));
-		p.drawLine(QPointF(x1, 0), QPointF(x1, height()));
-		p.drawLine(QPointF(x2, 0), QPointF(x2, height()));
+	const auto gaps = view_.visible_idle_gaps(width());
+	if (!gaps.empty()) {
+		const QColor gap_fill(150, 130, 60, 22);
+		const QPen gap_pen(QColor(150, 130, 60, 140), 1, Qt::DashLine);
+		p.setPen(gap_pen);
+		for (const auto gap : gaps) {
+			const double x1 = std::max(0.0, view_.time_to_pixel(gap->begin));
+			const double x2 = std::min(double(width()), view_.time_to_pixel(gap->end));
+			p.fillRect(QRectF(x1, 0, x2 - x1, height()), gap_fill);
+			p.drawLine(QPointF(x1, 0), QPointF(x1, height()));
+			p.drawLine(QPointF(x2, 0), QPointF(x2, height()));
+		}
 	}
 	p.end();
 }

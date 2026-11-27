@@ -111,9 +111,9 @@ public:
 	shared_ptr<pv::data::LogicSegment> get_logic_segment_to_paint() const;
 
 protected:
-	void paint_caps(QPainter &p, QLineF *const lines,
-		vector< pair<int64_t, bool> > &edges,
-		bool level, const std::function<double(int64_t)>& sample_x, float y_offset);
+	void paint_caps(QPainter &p, vector<QLineF> &lines,
+		const vector<pair<int64_t, bool>> &edges,
+		const vector<double> &edge_x, bool level, float y_offset);
 
 	void init_trigger_actions(QWidget *parent);
 
@@ -158,6 +158,14 @@ protected:
 	QPointer<QAction> trigger_falling_;
 	QPointer<QAction> trigger_low_;
 	QPointer<QAction> trigger_change_;
+
+	// Reusable per-frame paint buffers to avoid heap churn during pan/zoom.
+	vector<pair<int64_t, bool>> edges_;
+	vector<double> edge_x_;
+	vector<QLineF> edge_lines_;
+	vector<QLineF> cap_lines_;
+	vector<QRectF> high_rects_;
+	vector<QRectF> sampling_points_;
 
 	static QCache<QString, const QIcon> icon_cache_;
 	static QCache<QString, const QPixmap> pixmap_cache_;

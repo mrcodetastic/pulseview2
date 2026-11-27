@@ -142,6 +142,7 @@ private:
 
 	void reset_pixel_values();
 	void process_next_sample_value(float x, float value);
+	void apply_vdivs_change();
 
 protected:
 	void populate_popup_form(QWidget *parent, QFormLayout *form);
@@ -190,6 +191,14 @@ private:
 	float prev_value_at_pixel_;  // Only used during lookup table update
 	float min_value_at_pixel_, max_value_at_pixel_;  // Only used during lookup table update
 	int current_pixel_pos_;  // Only used during lookup table update
+
+	// Reusable per-frame paint buffers to avoid repeated heap allocations.
+	vector<QPointF> trace_points_;
+	vector<QLineF> trace_lines_;
+	vector<float> sample_block_;
+	vector<QRectF> envelope_rects_;
+	vector<QLineF> grid_major_lines_;
+	vector<QLineF> grid_minor_lines_;
 
 	// ---------------------------------------------------------------------------
 	// Note: Make sure to update save_settings() and restore_settings() when

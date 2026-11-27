@@ -568,9 +568,12 @@ private:
 	uint64_t idle_scan_count_ = 0;
 	size_t idle_map_position_ = 0;
 	bool idle_ranges_ready_ = false;
+	pv::util::Timestamp idle_display_duration_ = 0;
 
 	/// The internal view version of the time offset in seconds.
 	pv::util::Timestamp offset_;
+	/// Cached idle_time_map_.to_display(offset_), updated on offset/map change.
+	pv::util::Timestamp display_offset_;
 	/// The ruler version of the time offset in seconds.
 	pv::util::Timestamp ruler_offset_;
 	/// The offset of the zero point in seconds.

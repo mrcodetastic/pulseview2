@@ -274,6 +274,9 @@ void Ruler::paintEvent(QPaintEvent*)
 			view_.minor_tick_count(),
 			ffunc);
 		else {
+			// Under idle compression, real-time ticks are piecewise uniform only
+			// between collapsed gaps. Generate ticks independently on each visible
+			// uncompressed interval [left, gap->begin) and clip to [0, span].
 			tick_position_cache_ = TickPositions();
 			const auto right = view_.pixel_to_time(width());
 			auto left = view_.pixel_to_time(0);
@@ -306,17 +309,19 @@ void Ruler::paintEvent(QPaintEvent*)
 	const int minor_tick_y1 = (major_tick_y1 + ruler_height) / 2;
 
 	QPainter p(this);
+	const QFontMetrics fm(font());
+	const QColor fg_color = palette().color(foregroundRole());
 
 	// Draw the tick marks
-	p.setPen(palette().color(foregroundRole()));
+	p.setPen(fg_color);
 
+	const int leftedge = 0;
+	const int rightedge = width();
 	int last_label_right = INT_MIN;
 	for (const auto& tick: tick_position_cache_->major) {
-		const int leftedge = 0;
-		const int rightedge = width();
 		const int x_tick = tick.first;
 		if ((x_tick > leftedge) && (x_tick < rightedge)) {
-			const int x_left_bound = util::text_width(QFontMetrics(font()), tick.second) / 2;
+			const int x_left_bound = util::text_width(fm, tick.second) / 2;
 			const int x_right_bound = rightedge - x_left_bound;
 			const int x_legend = min(max(x_tick, x_left_bound), x_right_bound);
 			if (x_legend - x_left_bound > last_label_right + 6) {
@@ -334,17 +339,18 @@ void Ruler::paintEvent(QPaintEvent*)
 				QPointF(tick, ruler_height));
 	}
 
+	const QColor gap_fill(150, 130, 60, 35);
 	for (const auto gap : view_.visible_idle_gaps(width())) {
 		const double x1 = max(0.0, view_.time_to_pixel(gap->begin));
 		const double x2 = min(double(width()), view_.time_to_pixel(gap->end));
 		if (x2 <= x1) continue;
-		p.fillRect(QRectF(x1, 0, x2 - x1, height()), QColor(150, 130, 60, 35));
-		p.setPen(palette().color(foregroundRole()));
+		p.fillRect(QRectF(x1, 0, x2 - x1, height()), gap_fill);
+		p.setPen(fg_color);
 		const QString duration = util::format_time_si(gap->end - gap->begin,
 			util::SIPrefix::unspecified, 3, "s", false);
 		const QString label = duration; // Keep the unit visible in narrow bands.
 		p.drawText(QRectF(x1, ruler_height + ValueMargin, x2 - x1, text_height), Qt::AlignCenter,
-			p.fontMetrics().elidedText(label, Qt::ElideRight, int(x2 - x1)));
+			fm.elidedText(label, Qt::ElideRight, int(x2 - x1)));
 		p.drawLine(QPointF(x1, major_tick_y1), QPointF(x1 + 4, ruler_height));
 		p.drawLine(QPointF(x2 - 4, major_tick_y1), QPointF(x2, ruler_height));
 	}
@@ -408,6 +414,8 @@ TickPositions Ruler::calculate_tick_positions(
 	const pv::util::Timestamp first_minor_division = ceil(offset / minor_period);
 	const pv::util::Timestamp t0 = first_major_division * major_period;
 
+	// Start one minor division left of `offset` so partially visible labels
+	// overhanging the left edge are still considered.
 	int division = (round(first_minor_division -
 		first_major_division * minor_tick_count)).convert_to<int>() - 1;
 
@@ -418,7 +426,8 @@ TickPositions Ruler::calculate_tick_positions(
 		x = ((t - offset) / scale).convert_to<double>();
 
 		if (division % minor_tick_count == 0) {
-			// Recalculate 't' without using 'minor_period' which is a fraction
+			// Recalculate 't' directly from major_period to avoid repeating-fraction
+			// drift from minor_period (e.g. major_period / 4 or / 5).
 			t = t0 + division / minor_tick_count * major_period;
 			tp.major.emplace_back(x, format_function(t));
 		} else {
@@ -434,8 +443,12 @@ TickPositions Ruler::calculate_tick_positions(
 void Ruler::on_hover_point_changed(const QWidget* widget, const QPoint &hp)
 {
 	(void)widget;
-	(void)hp;
 
+	// The ruler's hover arrow depends only on X; skip repaints on vertical-only motion.
+	if (hp.x() == last_hover_x_)
+		return;
+
+	last_hover_x_ = hp.x();
 	update();
 }
 

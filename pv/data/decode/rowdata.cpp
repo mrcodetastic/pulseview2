@@ -30,6 +30,43 @@ namespace pv {
 namespace data {
 namespace decode {
 
+namespace {
+
+struct ClassVisibilityFilter
+{
+	bool all_enabled = true;
+	bool all_disabled = true;
+	vector<uint8_t> visible;
+
+	explicit ClassVisibilityFilter(const Row *row)
+	{
+		uint32_t max_ann_class_id = 0;
+		const vector<AnnotationClass*>& classes = row->ann_classes();
+		for (const AnnotationClass* c : classes) {
+			if (!c->visible())
+				all_enabled = false;
+			else
+				all_disabled = false;
+			if (c->id > max_ann_class_id)
+				max_ann_class_id = c->id;
+		}
+		if (!all_enabled && !all_disabled) {
+			visible.resize(max_ann_class_id + 1, 0);
+			for (const AnnotationClass* c : classes)
+				if (c->visible())
+					visible[c->id] = 1;
+		}
+	}
+
+	bool accepts(const Annotation &a) const
+	{
+		return all_enabled ||
+			(a.ann_class_id() < visible.size() && visible[a.ann_class_id()]);
+	}
+};
+
+} // namespace
+
 RowData::RowData(Row* row) :
 	row_(row),
 	prev_ann_start_sample_(0),
@@ -61,6 +98,8 @@ uint64_t RowData::get_approx_annotation_count(
 	if (annotations_.empty() || start_sample > end_sample)
 		return 0;
 
+	// annotations_ is sorted by start_sample (not end_sample), so an annotation
+	// that overlaps start_sample can begin as early as start_sample - max_annotation_length_.
 	const uint64_t min_start = (start_sample > max_annotation_length_) ?
 		(start_sample - max_annotation_length_) : 0;
 
@@ -83,23 +122,12 @@ void RowData::get_annotation_subset(
 	if (annotations_.empty() || start_sample > end_sample)
 		return;
 
-	// Determine whether we must apply per-class filtering or not
-	bool all_ann_classes_enabled = true;
-	bool all_ann_classes_disabled = true;
-
-	uint32_t max_ann_class_id = 0;
-	for (AnnotationClass* c : row_->ann_classes()) {
-		if (!c->visible())
-			all_ann_classes_enabled = false;
-		else
-			all_ann_classes_disabled = false;
-		if (c->id > max_ann_class_id)
-			max_ann_class_id = c->id;
-	}
-
-	if (all_ann_classes_disabled)
+	const ClassVisibilityFilter filter(row_);
+	if (filter.all_disabled)
 		return;
 
+	// Back up the binary-search start by max_annotation_length_ so long
+	// annotations starting before start_sample but overlapping the window are included.
 	const uint64_t min_start = (start_sample > max_annotation_length_) ?
 		(start_sample - max_annotation_length_) : 0;
 
@@ -108,7 +136,7 @@ void RowData::get_annotation_subset(
 			return a.start_sample() < sample;
 		});
 
-	if (all_ann_classes_enabled) {
+	if (filter.all_enabled) {
 		// No filtering, send everything in range as-is
 		for (; it != annotations_.end(); ++it) {
 			if (it->start_sample() > end_sample)
@@ -117,19 +145,10 @@ void RowData::get_annotation_subset(
 				dest.push_back(&(*it));
 		}
 	} else {
-		// Filter out invisible annotation classes
-		vector<size_t> class_visible;
-		class_visible.resize(max_ann_class_id + 1, 0);
-		for (AnnotationClass* c : row_->ann_classes())
-			if (c->visible())
-				class_visible[c->id] = 1;
-
 		for (; it != annotations_.end(); ++it) {
 			if (it->start_sample() > end_sample)
 				break;
-			if ((it->ann_class_id() < class_visible.size()) &&
-				(class_visible[it->ann_class_id()]) &&
-				(it->end_sample() > start_sample))
+			if (filter.accepts(*it) && (it->end_sample() > start_sample))
 				dest.push_back(&(*it));
 		}
 	}
@@ -141,34 +160,9 @@ void RowData::get_annotation_lod(std::vector<AnnotationLodItem> &dest,
 	if (annotations_.empty() || pixel_samples.size() < 2)
 		return;
 
-	bool all_ann_classes_enabled = true;
-	bool all_ann_classes_disabled = true;
-
-	uint32_t max_ann_class_id = 0;
-	for (AnnotationClass* c : row_->ann_classes()) {
-		if (!c->visible())
-			all_ann_classes_enabled = false;
-		else
-			all_ann_classes_disabled = false;
-		if (c->id > max_ann_class_id)
-			max_ann_class_id = c->id;
-	}
-
-	if (all_ann_classes_disabled)
+	const ClassVisibilityFilter filter(row_);
+	if (filter.all_disabled)
 		return;
-
-	vector<uint8_t> class_visible;
-	if (!all_ann_classes_enabled) {
-		class_visible.resize(max_ann_class_id + 1, 0);
-		for (AnnotationClass* c : row_->ann_classes())
-			if (c->visible())
-				class_visible[c->id] = 1;
-	}
-
-	const auto is_visible = [&](const Annotation &a) -> bool {
-		return all_ann_classes_enabled ||
-			(a.ann_class_id() < class_visible.size() && class_visible[a.ann_class_id()]);
-	};
 
 	const uint64_t first_s0 = pixel_samples.front();
 	const uint64_t min_first_start = (first_s0 > max_annotation_length_) ?
@@ -179,6 +173,19 @@ void RowData::get_annotation_lod(std::vector<AnnotationLodItem> &dest,
 			return a.start_sample() < sample;
 		});
 
+	// Bound all per-pixel upper_bound searches to annotations starting within
+	// the visible viewport rather than scanning to annotations_.end().
+	const auto view_end_it = std::upper_bound(cur_it, annotations_.end(), pixel_samples.back(),
+		[](uint64_t sample, const Annotation &a) {
+			return sample < a.start_sample();
+		});
+
+	// Carry-over state across pixel columns:
+	// - active_isolated_ann: non-null while a single visible annotation spans
+	//   multiple pixels without competing annotations (eligible for full text render).
+	// - isolated_emitted: true once that isolated annotation has been pushed to dest.
+	// - active_end_sample / active_class_*: envelope of dense overlapping annotations
+	//   extending into subsequent pixel columns as a merged block.
 	uint64_t active_end_sample = 0;
 	uint32_t active_class_id = 0;
 	bool active_class_uniform = true;
@@ -187,8 +194,8 @@ void RowData::get_annotation_lod(std::vector<AnnotationLodItem> &dest,
 
 	// Catch any annotations starting before the left edge that extend into the view
 	size_t pre_overlap_count = 0;
-	for (; cur_it != annotations_.end() && cur_it->start_sample() < first_s0; ++cur_it) {
-		if (cur_it->end_sample() > first_s0 && is_visible(*cur_it)) {
+	for (; cur_it != view_end_it && cur_it->start_sample() < first_s0; ++cur_it) {
+		if (cur_it->end_sample() > first_s0 && filter.accepts(*cur_it)) {
 			if (pre_overlap_count == 0) {
 				active_end_sample = cur_it->end_sample();
 				active_class_id = cur_it->ann_class_id();
@@ -236,15 +243,15 @@ void RowData::get_annotation_lod(std::vector<AnnotationLodItem> &dest,
 		const uint64_t s1 = pixel_samples[i + 1];
 		const int x = left_x + static_cast<int>(i);
 
-		if (cur_it != annotations_.end() && cur_it->start_sample() < s0) {
-			cur_it = std::lower_bound(cur_it, annotations_.end(), s0,
+		if (cur_it != view_end_it && cur_it->start_sample() < s0) {
+			cur_it = std::lower_bound(cur_it, view_end_it, s0,
 				[](const Annotation &a, uint64_t sample) {
 					return a.start_sample() < sample;
 				});
 		}
 
-		const auto end_it = (cur_it != annotations_.end() && cur_it->start_sample() <= s1) ?
-			std::upper_bound(cur_it, annotations_.end(), s1,
+		const auto end_it = (cur_it != view_end_it && cur_it->start_sample() <= s1) ?
+			std::upper_bound(cur_it, view_end_it, s1,
 				[](uint64_t sample, const Annotation &a) {
 					return sample < a.start_sample();
 				}) : cur_it;
@@ -254,7 +261,7 @@ void RowData::get_annotation_lod(std::vector<AnnotationLodItem> &dest,
 		auto first_vis = end_it;
 		for (auto it = cur_it; it != end_it; ++it) {
 			if ((it->end_sample() > s0 || it->start_sample() == it->end_sample()) &&
-				is_visible(*it)) {
+				filter.accepts(*it)) {
 				first_vis = it;
 				break;
 			}
@@ -306,15 +313,18 @@ void RowData::get_annotation_lod(std::vector<AnnotationLodItem> &dest,
 						max_end = active_end_sample;
 				}
 
+				// O(1) 3-point heuristic (first_vis, next, last) estimates class
+				// uniformity and tail extent for dense pixel buckets without
+				// iterating through potentially thousands of annotations per pixel.
 				auto next_it = std::next(first_vis);
 				if (next_it != end_it) {
-					if (is_visible(*next_it) && next_it->ann_class_id() != pix_class)
+					if (filter.accepts(*next_it) && next_it->ann_class_id() != pix_class)
 						pix_uniform = false;
 					if (next_it->end_sample() > max_end)
 						max_end = next_it->end_sample();
 
 					auto last_it = std::prev(end_it);
-					if (is_visible(*last_it) && last_it->ann_class_id() != pix_class)
+					if (filter.accepts(*last_it) && last_it->ann_class_id() != pix_class)
 						pix_uniform = false;
 					if (last_it->end_sample() > max_end)
 						max_end = last_it->end_sample();
@@ -349,8 +359,7 @@ const Annotation* RowData::emplace_annotation(srd_proto_data *pdata)
 	// are expected to be the same, too. PDs that violate this assumption
 	// should be considered broken.
 	const char* const* ann_texts = (char**)pda->ann_text;
-	const QString ann0 = QString::fromUtf8(ann_texts[0]);
-	vector<QString>* storage_entry = &(ann_texts_[ann0]);
+	vector<QString>* storage_entry = &(ann_texts_[ann_texts[0]]);
 
 	if (storage_entry->empty()) {
 		while (*ann_texts) {

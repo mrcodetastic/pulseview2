@@ -87,6 +87,10 @@ public:
 	bool finished() const { return finished_.load(); }
 
 private:
+	bool start_single(bool async, const atomic<bool> *external_interrupt = nullptr);
+	bool is_interrupted() const {
+		return interrupt_.load() || (external_interrupt_ && external_interrupt_->load());
+	}
 	void store_collection_proc();
 	void store_proc(vector< shared_ptr<data::SignalBase> > achannel_list,
 		vector< shared_ptr<pv::data::AnalogSegment> > asegment_list,
@@ -112,6 +116,7 @@ private:
 	std::thread thread_;
 
 	atomic<bool> interrupt_;
+	const atomic<bool> *external_interrupt_{nullptr};
 	atomic<bool> finished_{false};
 
 	atomic<int> units_stored_, unit_count_;
