@@ -173,7 +173,7 @@ SubWindow::SubWindow(Session& session, QWidget* parent) :
 
 bool SubWindow::has_toolbar() const
 {
-	return true;
+	return false;
 }
 
 QToolBar* SubWindow::create_toolbar(QWidget *parent) const
