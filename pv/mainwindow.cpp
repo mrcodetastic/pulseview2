@@ -472,6 +472,14 @@ shared_ptr<Session> MainWindow::add_session()
 		if (s == last_focused_session_.get())
 			update_status_bar(s);
 	});
+	connect(session.get(), &Session::samplerate_changed, this, [this, s = session.get()] {
+		if (s == last_focused_session_.get())
+			update_status_bar(s);
+	});
+	connect(session.get(), &Session::new_segment, this, [this, s = session.get()] {
+		if (s == last_focused_session_.get())
+			update_status_bar(s);
+	});
 
 	sessions_.push_back(session);
 
@@ -1164,8 +1172,8 @@ void MainWindow::update_status_bar(Session *session)
 	QString dev_text = tr("No device selected");
 	if (auto dev = session->device()) {
 		dev_text = QString::fromStdString(dev->display_name(device_manager_));
-		const double sr = session->get_samplerate();
-		if (sr > 0) {
+		if (session->has_known_samplerate()) {
+			const double sr = session->get_samplerate();
 			dev_text += "  •  " + pv::util::format_value_si(
 				sr, pv::util::SIPrefix::unspecified, 0, "Hz", false);
 		}

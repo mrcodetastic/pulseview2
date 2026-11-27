@@ -218,6 +218,8 @@ public:
 	void restore_segment_triggers(const vector<util::Timestamp>& triggers);
 
 	double get_samplerate() const;
+	bool has_known_samplerate() const;
+	void set_configured_samplerate(uint64_t rate);
 	Glib::DateTime get_acquisition_start_time() const;
 
 	uint32_t get_highest_segment_id() const;
@@ -298,6 +300,7 @@ Q_SIGNALS:
 	void signals_changed();
 
 	void name_changed();
+	void samplerate_changed();
 
 	void trigger_event(int segment_id, util::Timestamp location);
 	void trigger_changed();
@@ -370,7 +373,7 @@ private:
 
 	mutable recursive_mutex data_mutex_;
 	shared_ptr<data::Logic> logic_data_;
-	uint64_t cur_samplerate_;
+	std::atomic<uint64_t> cur_samplerate_;
 	shared_ptr<data::LogicSegment> cur_logic_segment_;
 	map< shared_ptr<sigrok::Channel>, shared_ptr<data::AnalogSegment> >
 		cur_analog_segments_;

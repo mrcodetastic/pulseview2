@@ -706,6 +706,7 @@ void Session::set_device(shared_ptr<devices::Device> device)
 	cur_logic_segment_.reset();
 	cur_analog_segments_.clear();
 	logic_data_.reset();
+	cur_samplerate_ = 0;
 
 	signals_changed();
 
@@ -731,6 +732,12 @@ void Session::set_device(shared_ptr<devices::Device> device)
 	}
 
 	if (device_) {
+		try {
+			cur_samplerate_ = device_->read_config<uint64_t>(ConfigKey::SAMPLERATE);
+		} catch (Error&) {
+			// Device may not expose SAMPLERATE before capture starts.
+		}
+
 		device_->connect_datafeed([=]
 			(shared_ptr<sigrok::Device> device, shared_ptr<Packet> packet) {
 				data_feed_in(device, packet);
@@ -1372,11 +1379,34 @@ double Session::get_samplerate() const
 		for (const shared_ptr<pv::data::Segment>& s : segments)
 			samplerate = max(samplerate, s->samplerate());
 	}
+	if (samplerate == 0.0) {
+		const uint64_t configured = cur_samplerate_.load();
+		if (configured > 0)
+			samplerate = static_cast<double>(configured);
+	}
 	// If there is no sample rate given we use samples as unit
 	if (samplerate == 0.0)
 		samplerate = 1.0;
 
 	return samplerate;
+}
+
+bool Session::has_known_samplerate() const
+{
+	lock_guard<recursive_mutex> lock(data_mutex_);
+	for (const shared_ptr<pv::data::SignalData>& d : all_signal_data_) {
+		assert(d);
+		for (const shared_ptr<pv::data::Segment>& s : d->segments())
+			if (s->samplerate() > 0)
+				return true;
+	}
+	return cur_samplerate_.load() > 0;
+}
+
+void Session::set_configured_samplerate(uint64_t rate)
+{
+	cur_samplerate_ = rate;
+	samplerate_changed();
 }
 
 Glib::DateTime Session::get_acquisition_start_time() const
@@ -2133,6 +2163,7 @@ void Session::feed_in_meta(shared_ptr<Meta> meta)
 			if (active_window_mode_ && g_variant_get_uint64(entry.second.gobj()) != window_rate_)
 				throw std::runtime_error("Source sample rate changed during continuous capture windows.");
 			cur_samplerate_ = g_variant_get_uint64(entry.second.gobj());
+			samplerate_changed();
 			break;
 #ifdef HAVE_SR_CONF_CAPTURE_STATUS
 		case SR_CONF_CAPTURE_STATUS: {

@@ -911,6 +911,7 @@ void MainBar::commit_sample_rate()
 	try {
 		sr_dev->config_set(ConfigKey::SAMPLERATE,
 			Glib::Variant<guint64>::create(sample_rate));
+		session_.set_configured_samplerate(sample_rate);
 		update_sample_rate_selector();
 	} catch (Error& error) {
 		qDebug() << tr("Failed to configure samplerate:") << error.what();

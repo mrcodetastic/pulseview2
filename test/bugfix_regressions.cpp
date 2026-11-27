@@ -362,4 +362,36 @@ BOOST_AUTO_TEST_CASE(decode_signal_pause_resume_without_ub)
 }
 #endif
 
+BOOST_AUTO_TEST_CASE(session_reports_configured_samplerate_before_segments)
+{
+	ScopedQApplication app;
+
+	shared_ptr<sigrok::Context> context = sigrok::Context::create();
+	pv::DeviceManager device_manager(context, {}, false);
+	pv::Session session(device_manager, "bugfix_test");
+
+	// Without a device or segments, no rate is known and get_samplerate() returns the 1 Hz sentinel.
+	BOOST_CHECK(!session.has_known_samplerate());
+	BOOST_CHECK_EQUAL(session.get_samplerate(), 1.0);
+
+	auto sr_dev = context->drivers().at("demo")->scan({
+		{sigrok::ConfigKey::NUM_LOGIC_CHANNELS, Glib::Variant<gint32>::create(8)},
+		{sigrok::ConfigKey::NUM_ANALOG_CHANNELS, Glib::Variant<gint32>::create(0)},
+	}).at(0);
+	sr_dev->open();
+	sr_dev->config_set(sigrok::ConfigKey::SAMPLERATE, Glib::Variant<guint64>::create(24000000));
+	sr_dev->close();
+
+	auto hw_dev = make_shared<pv::devices::HardwareDevice>(context, sr_dev);
+	session.set_device(hw_dev);
+
+	// Even before any sample segment exists (e.g. when capture starts and clears old segments),
+	// Session must report the device's configured sample rate rather than 1 Hz.
+	BOOST_CHECK(session.has_known_samplerate());
+	BOOST_CHECK_EQUAL(session.get_samplerate(), 24000000.0);
+
+	session.set_configured_samplerate(1000000);
+	BOOST_CHECK_EQUAL(session.get_samplerate(), 1000000.0);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
