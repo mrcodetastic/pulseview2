@@ -48,12 +48,12 @@ Segment::Segment(uint32_t segment_id, uint64_t samplerate, unsigned int unit_siz
 {
 	assert(unit_size_ > 0);
 
-	// Determine the number of samples we can fit in one chunk
-	// without exceeding MaxChunkSize
-	chunk_size_ = min(MaxChunkSize, (MaxChunkSize / unit_size_) * unit_size_);
+	// Round down to an integral number of samples so every sample lies
+	// wholly inside a single chunk and chunk indexing is simple div/mod.
+	chunk_size_ = (MaxChunkSize / unit_size_) * unit_size_;
 
-	// Create the initial chunk
-	current_chunk_ = new uint8_t[chunk_size_ + 7];  /* FIXME +7 is workaround for #1284 */
+	// Create the initial chunk with tail padding for 8-byte unaligned loads.
+	current_chunk_ = new uint8_t[chunk_size_ + ChunkTailPadding];
 	data_chunks_.push_back(current_chunk_);
 	used_samples_ = 0;
 	unused_samples_ = chunk_size_ / unit_size_;
@@ -120,9 +120,11 @@ void Segment::free_unused_memory()
 		return;
 	}
 
+	// Once shrunk, no further samples may be appended to this segment because
+	// fixed-chunk_size_ indexing assumes every non-final chunk is full.
 	if (current_chunk_ && unused_samples_) {
 		// No more data will come in, so re-create the last chunk accordingly
-		uint8_t* resized_chunk = new (std::nothrow) uint8_t[used_samples_ * unit_size_ + 7];  /* FIXME +7 is workaround for #1284 */
+		uint8_t* resized_chunk = new (std::nothrow) uint8_t[used_samples_ * unit_size_ + ChunkTailPadding];
 		if (!resized_chunk)
 			return;
 		memcpy(resized_chunk, current_chunk_, used_samples_ * unit_size_);
@@ -147,7 +149,7 @@ void Segment::append_single_sample(void *data)
 	unused_samples_--;
 
 	if (unused_samples_ == 0) {
-		std::unique_ptr<uint8_t[]> next_chunk(new uint8_t[chunk_size_ + 7]);  /* FIXME +7 is workaround for #1284 */
+		std::unique_ptr<uint8_t[]> next_chunk(new uint8_t[chunk_size_ + ChunkTailPadding]);
 		data_chunks_.push_back(next_chunk.get());
 		current_chunk_ = next_chunk.release();
 		used_samples_ = 0;
@@ -166,19 +168,11 @@ void Segment::append_samples(void* data, uint64_t samples)
 	uint64_t data_offset = 0;
 
 	do {
-		uint64_t copy_count = 0;
+		const uint64_t copy_count = min(remaining_samples, unused_samples_);
 
-		if (remaining_samples <= unused_samples_) {
-			// All samples fit into the current chunk
-			copy_count = remaining_samples;
-		} else {
-			// Only a part of the samples fit, fill up current chunk
-			copy_count = unused_samples_;
-		}
-
-		const uint8_t* dest = &(current_chunk_[used_samples_ * unit_size_]);
+		uint8_t* dest = &(current_chunk_[used_samples_ * unit_size_]);
 		const uint8_t* src = &(data_byte_ptr[data_offset]);
-		memcpy((void*)dest, (void*)src, (copy_count * unit_size_));
+		memcpy(dest, src, copy_count * unit_size_);
 
 		used_samples_ += copy_count;
 		unused_samples_ -= copy_count;
@@ -188,11 +182,11 @@ void Segment::append_samples(void* data, uint64_t samples)
 		if (unused_samples_ == 0) {
 			// Keep the existing chunk owned until both allocation and
 			// publication of its successor have succeeded.
-			std::unique_ptr<uint8_t[]> next_chunk(new uint8_t[chunk_size_ + 7]);  /* FIXME +7 is workaround for #1284 */
+			std::unique_ptr<uint8_t[]> next_chunk(new uint8_t[chunk_size_ + ChunkTailPadding]);
 			{
 				// Reserve temporary headroom so allocation fails while the
 				// application can still report it and preserve earlier data.
-				const int dummy_size = 2 * chunk_size_;
+				const uint64_t dummy_size = 2 * chunk_size_;
 				std::unique_ptr<uint8_t[]> dummy_chunk(new uint8_t[dummy_size]);
 				memset(dummy_chunk.get(), 0xFF, dummy_size);
 			}
@@ -207,18 +201,21 @@ void Segment::append_samples(void* data, uint64_t samples)
 	sample_count_ += samples;
 }
 
-const uint8_t* Segment::get_raw_sample(uint64_t sample_num) const
+const uint8_t* Segment::get_raw_sample_unlocked(uint64_t sample_num) const
 {
 	assert(sample_num <= sample_count_);
 
-	uint64_t chunk_num = (sample_num * unit_size_) / chunk_size_;
-	uint64_t chunk_offs = (sample_num * unit_size_) % chunk_size_;
+	const uint64_t byte_offset = sample_num * unit_size_;
+	const uint64_t chunk_num = byte_offset / chunk_size_;
+	const uint64_t chunk_offs = byte_offset % chunk_size_;
 
+	return data_chunks_[chunk_num] + chunk_offs;
+}
+
+const uint8_t* Segment::get_raw_sample(uint64_t sample_num) const
+{
 	lock_guard<recursive_mutex> lock(mutex_);  // Because of free_unused_memory()
-
-	const uint8_t* chunk = data_chunks_[chunk_num];
-
-	return chunk + chunk_offs;
+	return get_raw_sample_unlocked(sample_num);
 }
 
 void Segment::get_raw_samples(uint64_t start, uint64_t count, uint8_t* dest) const
@@ -230,15 +227,16 @@ void Segment::get_raw_samples(uint64_t start, uint64_t count, uint8_t* dest) con
 
 	uint8_t* dest_ptr = dest;
 
-	uint64_t chunk_num = (start * unit_size_) / chunk_size_;
-	uint64_t chunk_offs = (start * unit_size_) % chunk_size_;
+	const uint64_t start_byte = start * unit_size_;
+	uint64_t chunk_num = start_byte / chunk_size_;
+	uint64_t chunk_offs = start_byte % chunk_size_;
 
 	lock_guard<recursive_mutex> lock(mutex_);  // Because of free_unused_memory()
 
 	while (count > 0) {
 		const uint8_t* chunk = data_chunks_[chunk_num];
 
-		uint64_t copy_size = min(count * unit_size_,
+		const uint64_t copy_size = min(count * unit_size_,
 			chunk_size_ - chunk_offs);
 
 		memcpy(dest_ptr, chunk + chunk_offs, copy_size);
@@ -259,9 +257,10 @@ SegmentDataIterator* Segment::begin_sample_iteration(uint64_t start)
 
 	iterator_count_++;
 
+	const uint64_t start_byte = start * unit_size_;
 	it->sample_index = start;
-	it->chunk_num = (start * unit_size_) / chunk_size_;
-	it->chunk_offs = (start * unit_size_) % chunk_size_;
+	it->chunk_num = start_byte / chunk_size_;
+	it->chunk_offs = start_byte % chunk_size_;
 	it->chunk = data_chunks_[it->chunk_num];
 
 	return it;
@@ -269,10 +268,13 @@ SegmentDataIterator* Segment::begin_sample_iteration(uint64_t start)
 
 void Segment::continue_sample_iteration(SegmentDataIterator* it, uint64_t increase)
 {
+	// Callers advance by at most one chunk per step (e.g. <= get_iterator_valid_length()).
+	// Advancing onto the exact end of the final full chunk relies on append_samples()
+	// eagerly allocating a trailing empty chunk so data_chunks_[chunk_num] stays in-bounds.
 	it->sample_index += increase;
 	it->chunk_offs += (increase * unit_size_);
 
-	if (it->chunk_offs > (chunk_size_ - 1)) {
+	if (it->chunk_offs >= chunk_size_) {
 		it->chunk_num++;
 		it->chunk_offs -= chunk_size_;
 		it->chunk = data_chunks_[it->chunk_num];

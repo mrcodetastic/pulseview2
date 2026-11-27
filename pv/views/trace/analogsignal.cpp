@@ -277,6 +277,9 @@ void AnalogSignal::paint_mid(QPainter &p, ViewItemPaintParams &pp)
 			const int64_t end_sample = min(max((ceil(end) + 1).convert_to<int64_t>(),
 				(int64_t)0), last_sample);
 
+			// Switch from direct per-sample lines to precomputed min/max
+			// mipmap envelopes once density reaches EnvelopeThreshold (64
+			// samples/pixel), keeping per-frame work bounded by viewport width.
 			if (samples_per_pixel < EnvelopeThreshold)
 				paint_trace(p, segment, y, pp.left(), start_sample, end_sample,
 					pixels_offset, samples_per_pixel);
@@ -344,46 +347,49 @@ void AnalogSignal::paint_grid(QPainter &p, int y, int left, int right)
 	bool was_antialiased = p.testRenderHint(QPainter::Antialiasing);
 	p.setRenderHint(QPainter::Antialiasing, false);
 
+	grid_major_lines_.clear();
+	grid_minor_lines_.clear();
+
 	if (pos_vdivs_ > 0) {
-		p.setPen(QPen(GridMajorColor, 1, Qt::DashLine));
 		for (int i = 1; i <= pos_vdivs_; i++) {
 			const float dy = i * div_height_;
-			p.drawLine(QLineF(left, y - dy, right, y - dy));
+			grid_major_lines_.emplace_back(left, y - dy, right, y - dy);
 		}
 	}
 
 	if ((pos_vdivs_ > 0) && show_analog_minor_grid_) {
-		p.setPen(QPen(GridMinorColor, 1, Qt::DashLine));
 		for (int i = 0; i < pos_vdivs_; i++) {
 			const float dy = i * div_height_;
-			const float dy25 = dy + (0.25 * div_height_);
-			const float dy50 = dy + (0.50 * div_height_);
-			const float dy75 = dy + (0.75 * div_height_);
-			p.drawLine(QLineF(left, y - dy25, right, y - dy25));
-			p.drawLine(QLineF(left, y - dy50, right, y - dy50));
-			p.drawLine(QLineF(left, y - dy75, right, y - dy75));
+			grid_minor_lines_.emplace_back(left, y - (dy + 0.25f * div_height_), right, y - (dy + 0.25f * div_height_));
+			grid_minor_lines_.emplace_back(left, y - (dy + 0.50f * div_height_), right, y - (dy + 0.50f * div_height_));
+			grid_minor_lines_.emplace_back(left, y - (dy + 0.75f * div_height_), right, y - (dy + 0.75f * div_height_));
 		}
 	}
 
 	if (neg_vdivs_ > 0) {
-		p.setPen(QPen(GridMajorColor, 1, Qt::DashLine));
 		for (int i = 1; i <= neg_vdivs_; i++) {
 			const float dy = i * div_height_;
-			p.drawLine(QLineF(left, y + dy, right, y + dy));
+			grid_major_lines_.emplace_back(left, y + dy, right, y + dy);
 		}
 	}
 
 	if ((pos_vdivs_ > 0) && show_analog_minor_grid_) {
-		p.setPen(QPen(GridMinorColor, 1, Qt::DashLine));
 		for (int i = 0; i < neg_vdivs_; i++) {
 			const float dy = i * div_height_;
-			const float dy25 = dy + (0.25 * div_height_);
-			const float dy50 = dy + (0.50 * div_height_);
-			const float dy75 = dy + (0.75 * div_height_);
-			p.drawLine(QLineF(left, y + dy25, right, y + dy25));
-			p.drawLine(QLineF(left, y + dy50, right, y + dy50));
-			p.drawLine(QLineF(left, y + dy75, right, y + dy75));
+			grid_minor_lines_.emplace_back(left, y + (dy + 0.25f * div_height_), right, y + (dy + 0.25f * div_height_));
+			grid_minor_lines_.emplace_back(left, y + (dy + 0.50f * div_height_), right, y + (dy + 0.50f * div_height_));
+			grid_minor_lines_.emplace_back(left, y + (dy + 0.75f * div_height_), right, y + (dy + 0.75f * div_height_));
 		}
+	}
+
+	if (!grid_major_lines_.empty()) {
+		p.setPen(QPen(GridMajorColor, 1, Qt::DashLine));
+		p.drawLines(grid_major_lines_.data(), grid_major_lines_.size());
+	}
+
+	if (!grid_minor_lines_.empty()) {
+		p.setPen(QPen(GridMinorColor, 1, Qt::DashLine));
+		p.drawLines(grid_minor_lines_.data(), grid_minor_lines_.size());
 	}
 
 	p.setRenderHint(QPainter::Antialiasing, was_antialiased);
@@ -406,7 +412,6 @@ void AnalogSignal::paint_trace(QPainter &p,
 		thresholds = base_->get_conversion_thresholds();
 
 	// Calculate and paint the sampling points if enabled and useful
-	GlobalSettings settings;
 	const bool show_sampling_points =
 		(show_sampling_points_ || paint_thr_dots) && (samples_per_pixel < 0.25);
 
@@ -414,15 +419,15 @@ void AnalogSignal::paint_trace(QPainter &p,
 
 	const int64_t points_count = end - start + 1;
 
-	QPointF *points = new QPointF[points_count];
-	QPointF *point = points;
+	trace_points_.resize(points_count);
+	QPointF *point = trace_points_.data();
 
 	vector<QRectF> sampling_points[3];
 
 	int64_t sample_count = min(points_count, TracePaintBlockSize);
 	int64_t block_sample = 0;
-	float *sample_block = new float[TracePaintBlockSize];
-	segment->get_samples(start, start + sample_count, sample_block);
+	sample_block_.resize(sample_count);
+	segment->get_samples(start, start + sample_count, sample_block_.data());
 
 	if (show_hover_marker_)
 		reset_pixel_values();
@@ -434,17 +439,17 @@ void AnalogSignal::paint_trace(QPainter &p,
 		if (block_sample == TracePaintBlockSize) {
 			block_sample = 0;
 			sample_count = min(points_count - sample, TracePaintBlockSize);
-			segment->get_samples(sample, sample + sample_count, sample_block);
+			segment->get_samples(sample, sample + sample_count, sample_block_.data());
 		}
 
 		const float abs_x = sample / samples_per_pixel - pixels_offset;
 		const float x = left + abs_x;
 
-		*point++ = QPointF(x, y - sample_block[block_sample] * scale_);
+		*point++ = QPointF(x, y - sample_block_[block_sample] * scale_);
 
 		// Generate the pixel<->value lookup table for the mouse hover
 		if (show_hover_marker_)
-			process_next_sample_value(abs_x, sample_block[block_sample]);
+			process_next_sample_value(abs_x, sample_block_[block_sample]);
 
 		// Create the sampling points if needed
 		if (show_sampling_points) {
@@ -452,39 +457,43 @@ void AnalogSignal::paint_trace(QPainter &p,
 
 			if (paint_thr_dots) {
 				if (thresholds.size() == 1)
-					idx = (sample_block[block_sample] >= thresholds[0]) ? 2 : 1;
+					idx = (sample_block_[block_sample] >= thresholds[0]) ? 2 : 1;
 				else if (thresholds.size() == 2) {
-					if (sample_block[block_sample] > thresholds[1])
+					if (sample_block_[block_sample] > thresholds[1])
 						idx = 2;  // High
-					else if (sample_block[block_sample] < thresholds[0])
+					else if (sample_block_[block_sample] < thresholds[0])
 						idx = 1;  // Low
 				}
 			}
 
-			sampling_points[idx].emplace_back(x - (w / 2), y - sample_block[block_sample] * scale_ - (w / 2), w, w);
+			sampling_points[idx].emplace_back(x - (w / 2), y - sample_block_[block_sample] * scale_ - (w / 2), w, w);
 		}
 	}
-	delete[] sample_block;
 
-	// QPainter::drawPolyline() is slow, let's paint the lines ourselves
+	// QPainter::drawPolyline() is slow due to miter-join calculations, so batch
+	// the independent segments into a single drawLines() call instead.
+	trace_lines_.resize(points_count - 1);
 	for (int64_t i = 1; i < points_count; i++)
-		p.drawLine(points[i - 1], points[i]);
+		trace_lines_[i - 1] = QLineF(trace_points_[i - 1], trace_points_[i]);
+	p.drawLines(trace_lines_.data(), trace_lines_.size());
 
 	if (show_sampling_points) {
 		if (paint_thr_dots) {
 			p.setPen(SamplingPointColorNe);
-			p.drawRects(sampling_points[0].data(), sampling_points[0].size());
+			if (!sampling_points[0].empty())
+				p.drawRects(sampling_points[0].data(), sampling_points[0].size());
 			p.setPen(SamplingPointColorLo);
-			p.drawRects(sampling_points[1].data(), sampling_points[1].size());
+			if (!sampling_points[1].empty())
+				p.drawRects(sampling_points[1].data(), sampling_points[1].size());
 			p.setPen(SamplingPointColorHi);
-			p.drawRects(sampling_points[2].data(), sampling_points[2].size());
+			if (!sampling_points[2].empty())
+				p.drawRects(sampling_points[2].data(), sampling_points[2].size());
 		} else {
 			p.setPen(SamplingPointColor);
-			p.drawRects(sampling_points[0].data(), sampling_points[0].size());
+			if (!sampling_points[0].empty())
+				p.drawRects(sampling_points[0].data(), sampling_points[0].size());
 		}
 	}
-
-	delete[] points;
 }
 
 void AnalogSignal::paint_envelope(QPainter &p,
@@ -507,8 +516,8 @@ void AnalogSignal::paint_envelope(QPainter &p,
 	p.setPen(QPen(Qt::NoPen));
 	p.setBrush(base_->color());
 
-	QRectF *const rects = new QRectF[e.length];
-	QRectF *rect = rects;
+	envelope_rects_.assign(e.length, QRectF());
+	QRectF *rect = envelope_rects_.data();
 
 	for (uint64_t sample = 0; sample < e.length - 1; sample++) {
 		const float x = ((e.scale * sample + e.start) /
@@ -517,7 +526,10 @@ void AnalogSignal::paint_envelope(QPainter &p,
 		const AnalogSegment::EnvelopeSample *const s = e.samples + sample;
 
 		// We overlap this sample with the next so that vertical
-		// gaps do not appear during steep rising or falling edges
+		// gaps do not appear during steep rising or falling edges.
+		// Because Qt's Y axis points downward, b (derived from max) sits
+		// above t (derived from min), so h = b - t is normally negative;
+		// clamping |h| < 1.0f to +-1.0f guarantees flat lines remain 1 px tall.
 		const float b = y - max(s->max, (s + 1)->min) * scale_;
 		const float t = y - min(s->min, (s + 1)->max) * scale_;
 
@@ -530,9 +542,8 @@ void AnalogSignal::paint_envelope(QPainter &p,
 		*rect++ = QRectF(x, t, 1.0f, h);
 	}
 
-	p.drawRects(rects, e.length);
+	p.drawRects(envelope_rects_.data(), e.length);
 
-	delete[] rects;
 	delete[] e.samples;
 }
 
@@ -564,6 +575,9 @@ float AnalogSignal::get_resolution(int scale_index)
 {
 	const float seq[] = {1.0f, 2.0f, 5.0f};
 
+	// Bias scale_index into positive integers before std::div() so negative
+	// indices yield a non-negative Euclidean remainder in [0, 2] instead of
+	// C++'s truncating-toward-zero negative remainder.
 	const int offset = numeric_limits<int>::max() / (2 * countof(seq));
 	const div_t d = div((int)(scale_index + countof(seq) * offset),
 		countof(seq));
@@ -748,6 +762,11 @@ void AnalogSignal::reset_pixel_values()
 
 void AnalogSignal::process_next_sample_value(float x, float value)
 {
+	// Builds a per-pixel value lookup table during paint_trace() for hover readout:
+	// - Multiple samples on the same pixel: track min/max and store their midpoint
+	//   when advancing to the next pixel.
+	// - Zoomed-in gaps (>1 px between samples): linearly interpolate intermediate
+	//   pixels so the readout tracks the drawn line segment smoothly.
 	// Note: NAN is used to indicate the non-existance of a value at this pixel
 
 	if (std::isnan(prev_value_at_pixel_)) {
@@ -964,13 +983,8 @@ void AnalogSignal::on_min_max_changed(float min, float max)
 	}
 }
 
-void AnalogSignal::on_pos_vdivs_changed(int vdivs)
+void AnalogSignal::apply_vdivs_change()
 {
-	if (vdivs == pos_vdivs_)
-		return;
-
-	pos_vdivs_ = vdivs;
-
 	// There has to be at least one div, positive or negative
 	if ((neg_vdivs_ == 0) && (pos_vdivs_ == 0)) {
 		pos_vdivs_ = 1;
@@ -997,37 +1011,22 @@ void AnalogSignal::on_pos_vdivs_changed(int vdivs)
 	}
 }
 
+void AnalogSignal::on_pos_vdivs_changed(int vdivs)
+{
+	if (vdivs == pos_vdivs_)
+		return;
+
+	pos_vdivs_ = vdivs;
+	apply_vdivs_change();
+}
+
 void AnalogSignal::on_neg_vdivs_changed(int vdivs)
 {
 	if (vdivs == neg_vdivs_)
 		return;
 
 	neg_vdivs_ = vdivs;
-
-	// There has to be at least one div, positive or negative
-	if ((neg_vdivs_ == 0) && (pos_vdivs_ == 0)) {
-		pos_vdivs_ = 1;
-		if (pvdiv_sb_)
-			pvdiv_sb_->setValue(pos_vdivs_);
-	}
-
-	if (autoranging_) {
-		perform_autoranging(true, true);
-
-		// It could be that a positive or negative div was added, so update
-		if (pvdiv_sb_) {
-			pvdiv_sb_->setValue(pos_vdivs_);
-			nvdiv_sb_->setValue(neg_vdivs_);
-		}
-	}
-
-	update_logic_level_offsets();
-
-	if (owner_) {
-		// Call order is important, otherwise the lazy event handler won't work
-		owner_->extents_changed(false, true);
-		owner_->row_item_appearance_changed(false, true);
-	}
+	apply_vdivs_change();
 }
 
 int AnalogSignal::div_height() const

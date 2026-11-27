@@ -304,8 +304,12 @@ void DecodeTrace::paint_mid(QPainter &p, ViewItemPaintParams &pp)
 	int y = get_visual_y();
 
 	const int view_width = max(1, pp.width());
+	// Switch from direct annotation fetching to pixel-binned LOD summaries
+	// once a row averages more than 4 annotations per viewport pixel.
 	const uint64_t max_direct_annotations = static_cast<uint64_t>(view_width) * 4;
 	vector<uint64_t> pixel_samples;
+	vector<pv::data::decode::AnnotationLodItem> lod_items;
+	deque<const Annotation*> annotations;
 
 	for (DecodeTraceRow& r : rows_) {
 		// If the row is hidden, we don't want to fetch annotations
@@ -322,30 +326,64 @@ void DecodeTrace::paint_mid(QPainter &p, ViewItemPaintParams &pp)
 
 		if (approx_count > max_direct_annotations) {
 			if (pixel_samples.empty()) {
-				const double rate = decode_signal_->get_samplerate() > 0 ?
-					decode_signal_->get_samplerate() : 1.0;
+				// Build view_width + 1 monotonic sample fenceposts so pixel column i
+				// spans [pixel_samples[i], pixel_samples[i + 1]).
+				const double raw_rate = decode_signal_->get_samplerate();
+				const double rate = raw_rate > 0 ? raw_rate : 1.0;
 				const auto origin = decode_signal_->start_time();
 				const auto *view = owner_->view();
+				const auto &idle_map = view->idle_time_map();
 				pixel_samples.resize(static_cast<size_t>(view_width) + 1);
-				for (int i = 0; i <= view_width; ++i) {
-					const uint64_t s = max(pv::util::Timestamp(0),
-						(view->pixel_to_time(pp.left() + i) - origin) * rate).convert_to<uint64_t>();
-					pixel_samples[static_cast<size_t>(i)] = min(s, sample_range.second);
+
+				if (idle_map.empty()) {
+					const double samples_per_pixel = view->scale() * rate;
+					const double base_sample =
+						((view->offset() - origin) * rate +
+						pv::util::Timestamp(pp.left()) * samples_per_pixel).convert_to<double>();
+					for (int i = 0; i <= view_width; ++i) {
+						const double s_d = base_sample + i * samples_per_pixel;
+						const uint64_t s = (s_d <= 0.0) ? 0 : static_cast<uint64_t>(s_d);
+						pixel_samples[static_cast<size_t>(i)] = min(s, sample_range.second);
+					}
+				} else {
+					// Walk the sorted idle gaps with a single monotonic cursor
+					// instead of binary-searching for every pixel column.
+					const auto &gaps = idle_map.gaps();
+					const pv::util::Timestamp disp_offset = idle_map.to_display(view->offset());
+					const double scale = view->scale();
+					const pv::util::Timestamp first_disp = disp_offset + pp.left() * scale;
+					size_t gap_idx = static_cast<size_t>(std::distance(gaps.begin(),
+						std::upper_bound(gaps.begin(), gaps.end(), first_disp,
+							[](const pv::util::Timestamp &t, const IdleTimeMap::Gap &gap) {
+								return t < gap.display_begin;
+							})));
+
+					for (int i = 0; i <= view_width; ++i) {
+						const pv::util::Timestamp display = disp_offset + (pp.left() + i) * scale;
+						while (gap_idx < gaps.size() && !(display < gaps[gap_idx].display_begin))
+							++gap_idx;
+
+						pv::util::Timestamp real_time;
+						if (gap_idx == 0) {
+							real_time = display;
+						} else {
+							const auto &gap = gaps[gap_idx - 1];
+							real_time = (display < gap.display_end) ?
+								gap.begin + (display - gap.display_begin) * gap.inv_ratio :
+								display + gap.removed;
+						}
+						const uint64_t s = max(pv::util::Timestamp(0),
+							(real_time - origin) * rate).convert_to<uint64_t>();
+						pixel_samples[static_cast<size_t>(i)] = min(s, sample_range.second);
+					}
 				}
 			}
 
-			vector<pv::data::decode::AnnotationLodItem> lod_items;
+			lod_items.clear();
 			decode_signal_->get_annotation_lod(lod_items, r.decode_row,
 				current_segment_, pixel_samples, pp.left());
 
-			r.currently_visible = !lod_items.empty();
-			if (!r.currently_visible) {
-				size_t ann_count = decode_signal_->get_annotation_count(r.decode_row, current_segment_);
-				r.currently_visible = ((always_show_all_rows_ || r.has_hidden_classes) &&
-					(ann_count > 0)) || r.expanded;
-			}
-
-			if (r.currently_visible) {
+			if (update_row_visibility(r, !lod_items.empty())) {
 				for (const auto &item : lod_items) {
 					if (item.is_block)
 						draw_annotation_block(item.start_x, item.end_x,
@@ -359,21 +397,11 @@ void DecodeTrace::paint_mid(QPainter &p, ViewItemPaintParams &pp)
 			continue;
 		}
 
-		deque<const Annotation*> annotations;
+		annotations.clear();
 		decode_signal_->get_annotation_subset(annotations, r.decode_row,
 			current_segment_, sample_range.first, sample_range.second);
 
-		// Show row if there are visible annotations, when user wants to see
-		// all rows that have annotations somewhere and this one is one of them
-		// or when the row has at least one hidden annotation class
-		r.currently_visible = !annotations.empty();
-		if (!r.currently_visible) {
-			size_t ann_count = decode_signal_->get_annotation_count(r.decode_row, current_segment_);
-			r.currently_visible = ((always_show_all_rows_ || r.has_hidden_classes) &&
-				(ann_count > 0)) || r.expanded;
-		}
-
-		if (r.currently_visible) {
+		if (update_row_visibility(r, !annotations.empty())) {
 			draw_annotations(annotations, p, pp, y, r);
 			y += r.height;
 			visible_rows++;
@@ -768,16 +796,33 @@ void DecodeTrace::draw_annotations(deque<const Annotation*>& annotations,
 	qreal block_start = 0;
 	int block_ann_count = 0;
 
-	const Annotation* prev_ann;
+	const Annotation* prev_ann = nullptr;
+	qreal prev_start = 0;
 	qreal prev_end = INT_MIN;
 
-	qreal a_end;
+	const QFontMetrics fm = p.fontMetrics();
+	const View *const view = owner_->view();
+	const bool compressed = !view->idle_time_map().empty();
+	const double raw_rate = decode_signal_->get_samplerate();
+	const double rate = raw_rate > 0 ? raw_rate : 1.0;
+	const auto origin = decode_signal_->start_time();
+	const double samples_per_pixel = view->scale() * rate;
+	const double linear_offset = compressed ? 0.0 :
+		((view->offset() - origin) / view->scale()).convert_to<double>();
+	const auto sample_to_x = [&](uint64_t sample) -> double {
+		if (!compressed)
+			return sample / samples_per_pixel - linear_offset;
+		return view->time_to_pixel(origin + pv::util::Timestamp(sample) / rate);
+	};
 
-	// Gather all annotations that form a visual "block" and draw them as such
+	// Coalescing state machine: annotations wide enough to fit at least one
+	// label are drawn individually; narrower annotations within 1 px of the
+	// previous annotation are merged into a single hatched block (preserving
+	// the class color when all annotations in the block share one class).
 	for (const Annotation* a : annotations) {
 
-		const qreal a_start = sample_x(a->start_sample());
-		a_end = sample_x(a->end_sample());
+		const qreal a_start = sample_to_x(a->start_sample());
+		const qreal a_end = sample_to_x(a->end_sample());
 
 		const qreal a_width = a_end - a_start;
 		const qreal delta = a_end - prev_end;
@@ -787,7 +832,7 @@ void DecodeTrace::draw_annotations(deque<const Annotation*>& annotations,
 		// Annotation wider than the threshold for a useful label width?
 		if (a_width >= min_useful_label_width_) {
 			for (const QString &ann_text : *(a->annotations())) {
-				const qreal w = p.boundingRect(QRectF(), 0, ann_text).width();
+				const qreal w = util::text_width(fm, ann_text);
 				// Annotation wide enough to fit a label? Don't put it in a block then
 				if (w <= a_width) {
 					a_is_separate = true;
@@ -800,7 +845,7 @@ void DecodeTrace::draw_annotations(deque<const Annotation*>& annotations,
 		if ((abs(delta) > 1) || a_is_separate) {
 			// Block was broken, draw annotations that form the current block
 			if (block_ann_count == 1)
-				draw_annotation(prev_ann, p, pp, y, row);
+				draw_annotation(prev_ann, prev_start, prev_end, p, pp, y, row);
 			else if (block_ann_count > 0)
 				draw_annotation_block(block_start, prev_end, block_class,
 					block_class_uniform, p, y, row);
@@ -809,13 +854,14 @@ void DecodeTrace::draw_annotations(deque<const Annotation*>& annotations,
 		}
 
 		if (a_is_separate) {
-			draw_annotation(a, p, pp, y, row);
+			draw_annotation(a, a_start, a_end, p, pp, y, row);
 			// Next annotation must start a new block. delta will be > 1
 			// because we set prev_end to INT_MIN but that's okay since
 			// block_ann_count will be 0 and nothing will be drawn
 			prev_end = INT_MIN;
 			block_ann_count = 0;
 		} else {
+			prev_start = a_start;
 			prev_end = a_end;
 			prev_ann = a;
 
@@ -832,7 +878,7 @@ void DecodeTrace::draw_annotations(deque<const Annotation*>& annotations,
 	}
 
 	if (block_ann_count == 1)
-		draw_annotation(prev_ann, p, pp, y, row);
+		draw_annotation(prev_ann, prev_start, prev_end, p, pp, y, row);
 	else if (block_ann_count > 0)
 		draw_annotation_block(block_start, prev_end, block_class,
 			block_class_uniform, p, y, row);
@@ -843,7 +889,12 @@ void DecodeTrace::draw_annotation(const Annotation* a, QPainter &p,
 {
 	const double start = sample_x(a->start_sample());
 	const double end = sample_x(a->end_sample());
+	draw_annotation(a, start, end, p, pp, y, row);
+}
 
+void DecodeTrace::draw_annotation(const Annotation* a, qreal start, qreal end,
+	QPainter &p, const ViewItemPaintParams &pp, int y, const DecodeTraceRow& row) const
+{
 	p.setPen(a->dark_color());
 	p.setBrush(a->color());
 
@@ -941,12 +992,13 @@ void DecodeTrace::draw_range(const Annotation* a, QPainter &p,
 
 	p.setPen(Qt::black);
 
-	// Try to find an annotation that will fit
+	// Try to find the longest annotation variant that fits within the visible box
+	const QFontMetrics fm = p.fontMetrics();
 	QString best_annotation;
 	int best_width = 0;
 
 	for (const QString &s : *annotations) {
-		const int w = p.boundingRect(QRectF(), 0, s).width();
+		const int w = util::text_width(fm, s);
 		if (w <= rect.width() && w > best_width)
 			best_annotation = s, best_width = w;
 	}
@@ -954,8 +1006,8 @@ void DecodeTrace::draw_range(const Annotation* a, QPainter &p,
 	if (best_annotation.isEmpty())
 		best_annotation = annotations->back();
 
-	// If not ellide the last in the list
-	p.drawText(rect, Qt::AlignCenter, p.fontMetrics().elidedText(
+	// If not elide the last in the list
+	p.drawText(rect, Qt::AlignCenter, fm.elidedText(
 		best_annotation, Qt::ElideRight, rect.width()));
 }
 
@@ -990,6 +1042,21 @@ double DecodeTrace::sample_x(uint64_t sample) const
 	const double rate = decode_signal_->get_samplerate() > 0 ? decode_signal_->get_samplerate() : 1;
 	return owner_->view()->time_to_pixel(decode_signal_->start_time() +
 		pv::util::Timestamp(sample) / rate);
+}
+
+bool DecodeTrace::update_row_visibility(DecodeTraceRow& row, bool has_visible_items) const
+{
+	// Show row if there are visible annotations, when user wants to see
+	// all rows that have annotations somewhere and this one is one of them,
+	// when the row has at least one hidden annotation class, or while expanded.
+	row.currently_visible = has_visible_items;
+	if (!row.currently_visible) {
+		const size_t ann_count =
+			decode_signal_->get_annotation_count(row.decode_row, current_segment_);
+		row.currently_visible = ((always_show_all_rows_ || row.has_hidden_classes) &&
+			(ann_count > 0)) || row.expanded;
+	}
+	return row.currently_visible;
 }
 
 pair<uint64_t, uint64_t> DecodeTrace::get_view_sample_range(
@@ -1736,13 +1803,13 @@ void DecodeTrace::on_export_all_rows()
 	on_export_all_rows_from_here();
 }
 
-void DecodeTrace::on_export_row_with_cursor()
+bool DecodeTrace::get_cursor_sample_range(pair<uint64_t, uint64_t>& range) const
 {
 	const View *view = owner_->view();
 	assert(view);
 
 	if (!view->cursors()->enabled())
-		return;
+		return false;
 
 	const double samplerate = session_.get_samplerate();
 
@@ -1756,35 +1823,25 @@ void DecodeTrace::on_export_row_with_cursor()
 
 	// Are both cursors negative and thus were clamped to 0?
 	if ((start_sample == 0) && (end_sample == 0))
+		return false;
+
+	range = make_pair(start_sample, end_sample);
+	return true;
+}
+
+void DecodeTrace::on_export_row_with_cursor()
+{
+	if (!get_cursor_sample_range(selected_sample_range_))
 		return;
 
-	selected_sample_range_ = make_pair(start_sample, end_sample);
 	on_export_row_from_here();
 }
 
 void DecodeTrace::on_export_all_rows_with_cursor()
 {
-	const View *view = owner_->view();
-	assert(view);
-
-	if (!view->cursors()->enabled())
+	if (!get_cursor_sample_range(selected_sample_range_))
 		return;
 
-	const double samplerate = session_.get_samplerate();
-
-	const pv::util::Timestamp& start_time = view->cursors()->first()->time();
-	const pv::util::Timestamp& end_time = view->cursors()->second()->time();
-
-	const uint64_t start_sample = (uint64_t)max(
-		0.0, start_time.convert_to<double>() * samplerate);
-	const uint64_t end_sample = (uint64_t)max(
-		0.0, end_time.convert_to<double>() * samplerate);
-
-	// Are both cursors negative and thus were clamped to 0?
-	if ((start_sample == 0) && (end_sample == 0))
-		return;
-
-	selected_sample_range_ = make_pair(start_sample, end_sample);
 	on_export_all_rows_from_here();
 }
 

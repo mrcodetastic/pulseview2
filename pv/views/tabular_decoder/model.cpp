@@ -23,8 +23,6 @@
 
 #include "pv/views/tabular_decoder/view.hpp"
 
-#include "view.hpp"
-
 #include "pv/util.hpp"
 #include "pv/globalsettings.hpp"
 

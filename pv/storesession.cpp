@@ -121,6 +121,13 @@ bool StoreSession::start()
 		}
 		return true;
 	}
+	return start_single(true);
+}
+
+bool StoreSession::start_single(bool async, const std::atomic<bool> *external_interrupt)
+{
+	external_interrupt_ = external_interrupt;
+
 	const vector< shared_ptr<data::SignalBase> > sigs(session_.signalbases());
 
 	shared_ptr<data::Segment> any_segment;
@@ -133,19 +140,21 @@ bool StoreSession::start()
 			continue;
 
 		if (signal->type() == data::SignalBase::LogicChannel) {
-			// All logic channels share the same data segments
-			shared_ptr<data::Logic> ldata = signal->logic_data();
+			// All logic channels share the same data segments; resolve once.
+			if (!lsegment) {
+				shared_ptr<data::Logic> ldata = signal->logic_data();
 
-			const deque< shared_ptr<data::LogicSegment> > &lsegments =
-				ldata->logic_segments();
+				const deque< shared_ptr<data::LogicSegment> > &lsegments =
+					ldata->logic_segments();
 
-			if (segment_ >= lsegments.size()) {
-				error_ = tr("Can't save logic channel without data.");
-				return false;
+				if (segment_ >= lsegments.size()) {
+					error_ = tr("Can't save logic channel without data.");
+					return false;
+				}
+
+				lsegment = lsegments.at(segment_);
+				any_segment = lsegment;
 			}
-
-			lsegment = lsegments.at(segment_);
-			any_segment = lsegment;
 		}
 
 		if (signal->type() == data::SignalBase::AnalogChannel) {
@@ -204,6 +213,9 @@ bool StoreSession::start()
 
 		map<string, Glib::VariantBase> options = options_;
 
+		// Formats with INTERNAL_IO_HANDLING (e.g. srzip) manage their own file
+		// handles directly; stream-based formats return serialized bytes from
+		// output_->receive() which we write to output_stream_.
 		if (!output_format_->test_flag(OutputFlag::INTERNAL_IO_HANDLING)) {
 			output_stream_.exceptions(ios_base::badbit | ios_base::failbit);
 			output_stream_.open(file_name_, ios_base::binary |
@@ -228,8 +240,11 @@ bool StoreSession::start()
 		auto header = context->create_header_packet(session_.get_acquisition_start_time());
 		output_->receive(header);
 
-		thread_ = std::thread(&StoreSession::store_proc, this,
-			achannel_list, asegment_list, lsegment);
+		if (async)
+			thread_ = std::thread(&StoreSession::store_proc, this,
+				achannel_list, asegment_list, lsegment);
+		else
+			store_proc(achannel_list, asegment_list, lsegment);
 	} catch (const std::exception& error) {
 		error_ = tr("Error while saving: ") + error.what();
 		return false;
@@ -274,13 +289,11 @@ void StoreSession::store_collection_proc()
 		for (uint32_t i = 0; i < count; ++i) {
 			if (interrupt_) break;
 			const auto name = directory.filePath(QString::number(i) + ".sr");
+			// Run each staged frame export synchronously on this worker thread,
+			// sharing interrupt_, instead of spawning a thread + polling per frame.
 			StoreSession child(name.toStdString(), output_format_, options_, {0, 0}, session_, i, false, false);
-			if (!child.start()) throw std::runtime_error(child.error().toStdString());
-			while (!child.finished()) {
-				if (interrupt_) child.cancel();
-				QThread::msleep(5);
-			}
-			child.wait();
+			if (!child.start_single(false, &interrupt_))
+				throw std::runtime_error(child.error().toStdString());
 			if (interrupt_) break;
 			if (!child.error().isEmpty()) throw std::runtime_error(child.error().toStdString());
 			CollectionFrame frame;
@@ -348,36 +361,45 @@ void StoreSession::store_proc(vector< shared_ptr<data::SignalBase> > achannel_li
 	const unsigned int samples_per_block =
 		min(asamples_per_block, lsamples_per_block);
 
+	// Hoist large scratch buffers outside the block loop to avoid allocating
+	// and zero-filling up to BlockSize (10 MiB) on every iteration.
+	vector<float> adata;
+	vector<uint8_t> ldata;
+	vector<shared_ptr<sigrok::Channel>> achannel_vec(1);
+	const vector<const sigrok::QuantityFlag *> empty_mq_flags;
+
 	const auto context = session_.device_manager().context();
-	while (!interrupt_ && sample_count_) {
+	while (!is_interrupted() && sample_count_) {
 		progress_updated();
 
 		const uint64_t packet_len =
 			min((uint64_t)samples_per_block, sample_count_);
 
 		try {
-			for (unsigned int i = 0; i < achannel_list.size(); i++) {
-				shared_ptr<sigrok::Channel> achannel = (achannel_list.at(i))->channel();
-				shared_ptr<data::AnalogSegment> asegment = asegment_list.at(i);
+			if (!achannel_list.empty()) {
+				if (adata.size() < packet_len)
+					adata.resize(packet_len);
+				for (unsigned int i = 0; i < achannel_list.size(); i++) {
+					achannel_vec[0] = (achannel_list.at(i))->channel();
+					shared_ptr<data::AnalogSegment> asegment = asegment_list.at(i);
 
-				vector<float> adata(packet_len);
-				asegment->get_samples(start_sample_, start_sample_ + packet_len, adata.data());
+					asegment->get_samples(start_sample_, start_sample_ + packet_len, adata.data());
 
-				auto analog = context->create_analog_packet(
-					vector<shared_ptr<sigrok::Channel> >{achannel},
-					adata.data(), packet_len,
-					sigrok::Quantity::VOLTAGE, sigrok::Unit::VOLT,
-					vector<const sigrok::QuantityFlag *>());
-				const string adata_str = output_->receive(analog);
+					auto analog = context->create_analog_packet(
+						achannel_vec, adata.data(), packet_len,
+						sigrok::Quantity::VOLTAGE, sigrok::Unit::VOLT,
+						empty_mq_flags);
+					const string adata_str = output_->receive(analog);
 
-				if (output_stream_.is_open())
-					output_stream_ << adata_str;
-
+					if (output_stream_.is_open())
+						output_stream_ << adata_str;
+				}
 			}
 
 			if (lsegment) {
 				const size_t data_size = packet_len * lunit_size;
-				vector<uint8_t> ldata(data_size);
+				if (ldata.size() < data_size)
+					ldata.resize(data_size);
 				lsegment->get_samples(start_sample_, start_sample_ + packet_len, ldata.data());
 
 				auto logic = context->create_logic_packet(ldata.data(), data_size, lunit_size);
@@ -385,7 +407,6 @@ void StoreSession::store_proc(vector< shared_ptr<data::SignalBase> > achannel_li
 
 				if (output_stream_.is_open())
 					output_stream_ << ldata_str;
-
 			}
 		} catch (const std::exception& error) {
 			error_ = tr("Error while saving: ") + error.what();
@@ -416,7 +437,7 @@ void StoreSession::store_proc(vector< shared_ptr<data::SignalBase> > achannel_li
 		}
 	}
 
-	if (!interrupt_ && !sample_count_ && error_.isEmpty())
+	if (!is_interrupted() && !sample_count_ && error_.isEmpty())
 		store_successful();
 
 	// Zeroing the progress variables indicates that the worker has finished,

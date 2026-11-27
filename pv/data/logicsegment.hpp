@@ -58,6 +58,7 @@ public:
 	static const unsigned int ScaleStepCount = 10;
 	static const int MipMapScalePower;
 	static const int MipMapScaleFactor;
+	static constexpr uint64_t MipMapScaleMask = (UINT64_C(1) << 4) - 1;
 	static const float LogMipMapScaleFactor;
 	static const uint64_t MipMapDataUnit;
 
@@ -139,6 +140,9 @@ private:
 	void append_payload_to_mipmap();
 
 	uint64_t get_unpacked_sample(uint64_t index) const;
+	// Caller must hold mutex_; reads directly from chunk storage without
+	// copying or re-acquiring the recursive mutex.
+	uint64_t get_unpacked_sample_unlocked(uint64_t index) const;
 
 	template <class T> void downsampleTmain(const T*&in, T &acc, T &prev);
 	template <class T> void downsampleT(const uint8_t *in, uint8_t *&out, uint64_t len);

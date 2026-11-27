@@ -20,11 +20,11 @@
 #ifndef PULSEVIEW_PV_DATA_DECODE_ROWDATA_HPP
 #define PULSEVIEW_PV_DATA_DECODE_ROWDATA_HPP
 
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 #include <QtGlobal>
-#include <QHash>
 #include <QString>
 
 #include <libsigrokdecode/libsigrokdecode.h>
@@ -33,16 +33,6 @@
 
 using std::deque;
 using std::unordered_map;
-
-#if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
-namespace std {
-	template<> struct hash<QString> {
-		std::size_t operator()(const QString& s) const noexcept {
-			return (size_t) qHash(s);
-		}
-	};
-}
-#endif
 
 namespace pv {
 namespace data {
@@ -79,9 +69,8 @@ public:
 		uint64_t end_sample) const;
 
 	/**
-	 * Extracts annotations between the given sample range into a vector.
-	 * Note: The annotations are unsorted and only annotations that fully
-	 * fit into the sample range are considered.
+	 * Extracts visible annotations overlapping [start_sample, end_sample]
+	 * (start <= end_sample && end > start_sample) into dest in start_sample order.
 	 */
 	void get_annotation_subset(deque<const pv::data::decode::Annotation*> &dest,
 		uint64_t start_sample, uint64_t end_sample) const;
@@ -100,7 +89,11 @@ public:
 
 private:
 	deque<Annotation> annotations_;
-	unordered_map<QString, vector<QString> > ann_texts_;  // unordered_map since pointers must not change
+	// Keyed by raw UTF-8 std::string so cache hits avoid QString::fromUtf8()
+	// conversions. Must remain a node-based container (unordered_map) because
+	// Annotation::texts_ stores raw pointers to mapped vector<QString> values
+	// that must stay valid across insertions and rehashes.
+	unordered_map<std::string, vector<QString> > ann_texts_;
 	Row* row_;
 	uint64_t prev_ann_start_sample_;
 	uint64_t max_annotation_length_;

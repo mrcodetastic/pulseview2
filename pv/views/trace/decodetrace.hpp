@@ -196,6 +196,8 @@ private:
 
 	void draw_annotation(const Annotation* a, QPainter &p,
 		const ViewItemPaintParams &pp, int y, const DecodeTraceRow& row) const;
+	void draw_annotation(const Annotation* a, qreal start, qreal end, QPainter &p,
+		const ViewItemPaintParams &pp, int y, const DecodeTraceRow& row) const;
 
 	void draw_annotation_block(qreal start, qreal end, uint32_t ann_class,
 		bool use_ann_format, QPainter &p, int y, const DecodeTraceRow& row) const;
@@ -210,6 +212,9 @@ private:
 	void draw_unresolved_period(QPainter &p, int left, int right) const;
 
 	double sample_x(uint64_t sample) const;
+
+	bool update_row_visibility(DecodeTraceRow& row, bool has_visible_items) const;
+	bool get_cursor_sample_range(pair<uint64_t, uint64_t>& range) const;
 
 	/**
 	 * Determines the start and end sample for a given pixel range.

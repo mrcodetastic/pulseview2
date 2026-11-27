@@ -255,7 +255,8 @@ shared_ptr<views::ViewBase> MainWindow::add_view(views::ViewType type,
 		SLOT(trigger_event(int, util::Timestamp)));
 
 	connect(&session, SIGNAL(session_error_raised(const QString, const QString)),
-		this, SLOT(on_session_error_raised(const QString, const QString)));
+		this, SLOT(on_session_error_raised(const QString, const QString)),
+		Qt::UniqueConnection);
 
 	if (type == views::ViewTypeTrace) {
 		views::trace::View *tv =
@@ -1293,7 +1294,7 @@ void MainWindow::on_run_stop_for_session(Session *target_session)
 			if (any_running)
 				s->request_stop_capture();
 			else if (!s->device_needs_reconnect() && !s->stop_requested())
-				s->start_capture([&](QString message) {Q_EMIT session_error_raised("Capture failed", message);});
+				s->start_capture([this](QString message) {Q_EMIT session_error_raised("Capture failed", message);});
 			if (s->main_bar())
 				s->main_bar()->update_run_stop_button();
 		}
@@ -1306,7 +1307,7 @@ void MainWindow::on_run_stop_for_session(Session *target_session)
 
 		switch (session->get_capture_state()) {
 		case Session::Stopped:
-			session->start_capture([&](QString message) {Q_EMIT session_error_raised("Capture failed", message);});
+			session->start_capture([this](QString message) {Q_EMIT session_error_raised("Capture failed", message);});
 			break;
 		case Session::AwaitingTrigger:
 		case Session::Running:

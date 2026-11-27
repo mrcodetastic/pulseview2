@@ -122,6 +122,9 @@ void apply_trigger_configuration(const std::shared_ptr<sigrok::Session> &session
 	if (!session) throw std::runtime_error("No capture session.");
 	validate_hardware_trigger(device, trigger, options);
 #ifdef HAVE_SR_CONF_TRIGGER_OPTIONS
+	// Apply TRIGGER_OPTIONS before session->set_trigger() so hardware drivers
+	// see the active qualifier mode when validating stages; roll back on error
+	// so the device is never left with mismatched options and stages.
 	const bool extended = hardware_trigger_supported(device);
 	Glib::VariantBase previous;
 	if (extended) {

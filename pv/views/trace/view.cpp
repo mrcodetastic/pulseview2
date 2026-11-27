@@ -291,6 +291,7 @@ void View::reset_view_state()
 	segment_selectable_ = false;
 	scale_ = 1e-3;
 	offset_ = 0;
+	display_offset_ = 0;
 	ruler_offset_ = 0;
 	zero_offset_ = 0;
 	custom_zero_offset_set_ = false;
@@ -594,13 +595,13 @@ double View::scale() const
 
 double View::time_to_pixel(const Timestamp& time) const
 {
-	return ((idle_time_map_.to_display(time) -
-		idle_time_map_.to_display(offset_)) / scale_).convert_to<double>();
+	return ((idle_time_map_.to_display(time) - display_offset_) /
+		scale_).convert_to<double>();
 }
 
 Timestamp View::pixel_to_time(double x) const
 {
-	return idle_time_map_.to_real(idle_time_map_.to_display(offset_) + x * scale_);
+	return idle_time_map_.to_real(display_offset_ + x * scale_);
 }
 
 vector<const IdleTimeMap::Gap*> View::visible_idle_gaps(int width) const
@@ -657,11 +658,15 @@ void View::reset_idle_compression(const QString& status)
 	idle_scan_.reset();
 	idle_scan_segment_.reset();
 	idle_time_map_.clear();
+	display_offset_ = offset_;
 	pending_idle_map_.clear();
 	idle_map_position_ = 0;
 	idle_ranges_ready_ = false;
+	idle_display_duration_ = 0;
 	idle_compression_enabled_ = false;
 	if (was_active) {
+		viewport_->setToolTip(QString());
+		ruler_->setToolTip(QString());
 		if (idle_plain_scale_ > 0)
 			set_scale_offset(idle_plain_scale_, idle_plain_offset_);
 		idle_mapping_updated();
@@ -755,30 +760,40 @@ void View::process_idle_scan()
 				if (idle_scan_->position() == idle_scan_count_) {
 					idle_scan_->finish();
 					idle_ranges_ready_ = true;
+
+					// Allocate at most 2/3 of the active (unfolded) capture time
+					// across all folded pauses so zoom-to-fit keeps bursts
+					// dominant while reserving readable width for break labels.
+					const double rate = idle_scan_segment_->samplerate();
+					const auto& ranges = idle_scan_->ranges();
+					uint64_t folded_samples = 0;
+					for (const auto& range : ranges)
+						folded_samples += range.second - range.first;
+					idle_display_duration_ = ranges.empty() ?
+						Timestamp(idle_threshold_) / 100 :
+						max(Timestamp(idle_threshold_) / 100,
+							Timestamp(idle_scan_count_ - folded_samples) / rate * 2 / 3 / ranges.size());
 				}
 			}
 			if (idle_ranges_ready_) {
 				const double rate = idle_scan_segment_->samplerate();
 				const auto origin = idle_scan_segment_->start_time();
 				const auto& ranges = idle_scan_->ranges();
-				uint64_t folded_samples = 0;
-				for (const auto& range : ranges) folded_samples += range.second - range.first;
-				// Reserve readable space for break labels when fitting rare
-				// bursts, without ever expanding a short original interval.
-				const Timestamp display_duration = ranges.empty() ? Timestamp(idle_threshold_) / 100 :
-					max(Timestamp(idle_threshold_) / 100,
-						Timestamp(idle_scan_count_ - folded_samples) / rate * 2 / 3 / ranges.size());
 				while (idle_map_position_ < ranges.size() && budget.elapsed() < 10) {
 					const auto& range = ranges[idle_map_position_++];
+					// Cap each gap at 1/10 of its real duration so a short
+					// idle interval is always visibly compressed (at least 10x)
+					// and never expanded.
 					pending_idle_map_.append(origin + Timestamp(range.first) / rate,
 						origin + Timestamp(range.second) / rate,
-						min(display_duration, Timestamp(range.second - range.first) / rate / 10));
+						min(idle_display_duration_, Timestamp(range.second - range.first) / rate / 10));
 				}
 				if (idle_map_position_ == ranges.size()) {
 					idle_scan_timer_.stop();
 					idle_scan_.reset();
 					idle_scan_segment_.reset();
 					idle_time_map_ = std::move(pending_idle_map_);
+					display_offset_ = idle_time_map_.to_display(offset_);
 					pending_idle_map_.clear();
 					idle_mapping_updated();
 					if (!idle_time_map_.empty()) zoom_fit(false);
@@ -809,6 +824,7 @@ void View::set_offset(const pv::util::Timestamp& offset, bool force_update)
 {
 	if ((offset_ != offset) || force_update) {
 		offset_ = offset;
+		display_offset_ = idle_time_map_.to_display(offset_);
 		ruler_offset_ = offset_ + zero_offset_;
 
 		update_view_range_metaobject();
@@ -1045,6 +1061,7 @@ void View::zoom(double steps)
 
 void View::zoom(double steps, int offset)
 {
+	// Each step zooms by a factor of 1.5x (negative exponent shrinks s/px).
 	set_zoom(scale_ * pow(3.0 / 2.0, -steps), offset);
 }
 
@@ -1083,6 +1100,8 @@ void View::focus_on_range(uint64_t start_sample, uint64_t end_sample)
 
 	const double samplerate = session_.get_samplerate();
 	if (!idle_time_map_.empty() && samplerate > 0) {
+		// Frame the requested range with 20% leading and 5% trailing margin
+		// in compressed display-time space (1.25x total span).
 		const Timestamp first = Timestamp(start_sample) / samplerate;
 		const Timestamp last = Timestamp(end_sample) / samplerate;
 		const Timestamp span = idle_time_map_.to_display(last) - idle_time_map_.to_display(first);
@@ -1443,6 +1462,8 @@ void View::get_scroll_layout(double &length, Timestamp &offset) const
 	const pair<Timestamp, Timestamp> extents = get_time_extents();
 	length = ((idle_time_map_.to_display(extents.second) -
 		idle_time_map_.to_display(extents.first)) / scale_).convert_to<double>();
+	// Uncompressed views measure scroll offset from t = 0; compressed views
+	// anchor scroll position to the display-time start of the capture extents.
 	offset = idle_time_map_.empty() ? offset_ / scale_ :
 		(idle_time_map_.to_display(offset_) - idle_time_map_.to_display(extents.first)) / scale_;
 }
@@ -1453,6 +1474,8 @@ void View::set_zoom(double scale, int offset)
 	always_zoom_to_fit_ = false;
 	always_zoom_to_fit_changed(false);
 
+	// Keep the display-time under pixel `offset` stationary across the zoom
+	// change by solving display_offset_new + offset * new_scale == cursor_offset.
 	const Timestamp cursor_offset = idle_time_map_.to_display(pixel_to_time(offset));
 	const Timestamp new_scale = max(min(Timestamp(scale), MaxScale), MinScale);
 	const Timestamp new_offset = idle_time_map_.to_real(cursor_offset - new_scale * offset);
@@ -1501,6 +1524,8 @@ void View::calculate_tick_spacing()
 				(ScaleUnits[unit++] + tp_margin);
 		} while (tp_with_margin < min_period && unit < countof(ScaleUnits));
 
+		// ScaleUnits is {1, 2, 5}: unit == 2 selects major step 2*10^n, which
+		// divides cleanly into 4 minor steps (0.5*10^n); 1 and 5 divide into 5.
 		minor_tick_count_ = (unit == 2) ? 4 : 5;
 		tick_period = order_decimal * ScaleUnits[unit - 1];
 		tick_prefix = static_cast<pv::util::SIPrefix>(
@@ -1560,6 +1585,9 @@ void View::update_scroll()
 
 	updating_scroll_ = true;
 
+	// QScrollBar ranges are 32-bit ints; when zoomed in far enough that the
+	// scrollable pixel length exceeds MaxScrollValue, switch to a normalized
+	// [0, MaxScrollValue] scale (mirrored in h_scroll_value_changed()).
 	if (length < MaxScrollValue) {
 		hscrollbar->setRange(0, length);
 		hscrollbar->setSliderPosition(offset.convert_to<double>());
@@ -1795,7 +1823,7 @@ bool View::eventFilter(QObject *object, QEvent *event)
 			hover_point_ = QPoint(-1, -1);
 
 		update_hover_point();
-		if (object == viewport_ || object == ruler_) {
+		if ((object == viewport_ || object == ruler_) && !idle_time_map_.empty()) {
 			const QString text = idle_gap_text(hover_point_.x());
 			viewport_->setToolTip(text);
 			ruler_->setToolTip(text);

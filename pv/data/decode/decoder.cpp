@@ -167,19 +167,25 @@ void Decoder::set_option(const char *id, GVariant *value)
 	apply_all_options();
 }
 
+GHashTable* Decoder::build_options_hash() const
+{
+	GHashTable *const opt_hash = g_hash_table_new_full(g_str_hash,
+		g_str_equal, g_free, (GDestroyNotify)g_variant_unref);
+
+	for (const auto& option : options_) {
+		GVariant *const value = option.second;
+		g_variant_ref(value);
+		g_hash_table_replace(opt_hash, (void*)g_strdup(
+			option.first.c_str()), value);
+	}
+
+	return opt_hash;
+}
+
 void Decoder::apply_all_options()
 {
 	if (decoder_inst_) {
-		GHashTable *const opt_hash = g_hash_table_new_full(g_str_hash,
-			g_str_equal, g_free, (GDestroyNotify)g_variant_unref);
-
-		for (const auto& option : options_) {
-			GVariant *const value = option.second;
-			g_variant_ref(value);
-			g_hash_table_replace(opt_hash, (void*)g_strdup(
-				option.first.c_str()), value);
-		}
-
+		GHashTable *const opt_hash = build_options_hash();
 		srd_inst_option_set(decoder_inst_, opt_hash);
 		g_hash_table_destroy(opt_hash);
 	}
@@ -196,15 +202,7 @@ bool Decoder::have_required_channels() const
 
 srd_decoder_inst* Decoder::create_decoder_inst(srd_session *session)
 {
-	GHashTable *const opt_hash = g_hash_table_new_full(g_str_hash,
-		g_str_equal, g_free, (GDestroyNotify)g_variant_unref);
-
-	for (const auto& option : options_) {
-		GVariant *const value = option.second;
-		g_variant_ref(value);
-		g_hash_table_replace(opt_hash, (void*)g_strdup(
-			option.first.c_str()), value);
-	}
+	GHashTable *const opt_hash = build_options_hash();
 
 	if (decoder_inst_)
 		qDebug() << "WARNING: previous decoder instance" << decoder_inst_ << "exists";

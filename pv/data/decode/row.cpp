@@ -43,6 +43,21 @@ Row::Row(uint32_t index, Decoder* decoder, const srd_decoder_annotation_row* srd
 	srd_row_(srd_row),
 	visible_(true)
 {
+	if (!decoder_)
+		return;
+
+	if (!srd_row_) {
+		if (index_ == 0) {
+			// When operating as the fallback row, all annotation classes belong to it
+			ann_classes_ = decoder_->ann_classes();
+		}
+		return;
+	}
+
+	for (GSList *l = srd_row_->ann_classes; l; l = l->next) {
+		const size_t class_id = (size_t)l->data;
+		ann_classes_.push_back(decoder_->get_ann_class_by_id(class_id));
+	}
 }
 
 const Decoder* Row::decoder() const
@@ -76,26 +91,10 @@ const QString Row::description() const
 	return QString();
 }
 
-vector<AnnotationClass*> Row::ann_classes() const
+const vector<AnnotationClass*>& Row::ann_classes() const
 {
 	assert(decoder_);
-
-	vector<AnnotationClass*> result;
-
-	if (!srd_row_) {
-		if (index_ == 0) {
-			// When operating as the fallback row, all annotation classes belong to it
-			return decoder_->ann_classes();
-		}
-		return result;
-	}
-
-	for (GSList *l = srd_row_->ann_classes; l; l = l->next) {
-		size_t class_id = (size_t)l->data;
-		result.push_back(decoder_->get_ann_class_by_id(class_id));
-	}
-
-	return result;
+	return ann_classes_;
 }
 
 uint32_t Row::index() const
@@ -125,21 +124,23 @@ void Row::set_base_color(QColor base_color)
 	const int v = DECODE_COLOR_VALUE;
 	color_.setHsl(h, s, v);
 
-	vector<AnnotationClass*> classes = ann_classes();
-	for (const AnnotationClass* ann_class : classes) {
+	class_colors_.clear();
+	for (const AnnotationClass* ann_class : ann_classes_) {
+		if (!ann_class)
+			continue;
 
 		// For each class color, use the row color hue and add an offset that's
 		// not a dividend of 360 and not a multiple of the row offset
 
 		QColor ann_color(color_);
-		const int h = (ann_color.toHsv().hue() + 55 * ann_class->id) % 360;
-		const int s = DECODE_COLOR_SATURATION;
-		const int v = DECODE_COLOR_VALUE;
-		ann_color.setHsl(h, s, v);
+		const int class_h = (ann_color.toHsv().hue() + 55 * ann_class->id) % 360;
+		ann_color.setHsl(class_h, DECODE_COLOR_SATURATION, DECODE_COLOR_VALUE);
 
-		ann_class_color_[ann_class->id] = ann_color;
-		ann_bright_class_color_[ann_class->id] = ann_color.lighter();
-		ann_dark_class_color_[ann_class->id] = ann_color.darker();
+		if (ann_class->id >= class_colors_.size())
+			class_colors_.resize(ann_class->id + 1);
+		class_colors_[ann_class->id] = {
+			true, ann_color, ann_color.lighter(), ann_color.darker()
+		};
 	}
 }
 
@@ -150,36 +151,32 @@ const QColor Row::color() const
 
 const QColor Row::get_class_color(uint32_t ann_class_id) const
 {
-	try {
-		return ann_class_color_.at(ann_class_id);
-	} catch (std::out_of_range &e) {
-		qWarning() << "Warning: annotation type" << decoder_->get_ann_class_by_id(ann_class_id)->name
-			<< "(" << ann_class_id << ")" << "not assigned to any annotation row!";
-		return QColor(20, 20, 20);
-	}
+	if ((ann_class_id < class_colors_.size()) && class_colors_[ann_class_id].valid)
+		return class_colors_[ann_class_id].normal;
+
+	const AnnotationClass *const cls = decoder_ ? decoder_->get_ann_class_by_id(ann_class_id) : nullptr;
+	qWarning() << "Warning: annotation type" << (cls ? cls->name : "<unknown>")
+		<< "(" << ann_class_id << ")" << "not assigned to any annotation row!";
+	return QColor(20, 20, 20);
 }
 
 const QColor Row::get_bright_class_color(uint32_t ann_class_id) const
 {
-	try {
-		return ann_bright_class_color_.at(ann_class_id);
-	} catch (std::out_of_range &e) {
-		return QColor(20, 20, 20);
-	}
+	if ((ann_class_id < class_colors_.size()) && class_colors_[ann_class_id].valid)
+		return class_colors_[ann_class_id].bright;
+	return QColor(20, 20, 20);
 }
 
 const QColor Row::get_dark_class_color(uint32_t ann_class_id) const
 {
-	try {
-		return ann_dark_class_color_.at(ann_class_id);
-	} catch (std::out_of_range &e) {
-		return QColor(20, 20, 20);
-	}
+	if ((ann_class_id < class_colors_.size()) && class_colors_[ann_class_id].valid)
+		return class_colors_[ann_class_id].dark;
+	return QColor(20, 20, 20);
 }
 
 bool Row::has_hidden_classes() const
 {
-	for (const AnnotationClass* c : ann_classes())
+	for (const AnnotationClass* c : ann_classes_)
 		if (!c->visible())
 			return true;
 

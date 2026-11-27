@@ -44,6 +44,9 @@ using sigrok::Logic;
 namespace pv {
 namespace data {
 
+// Each mipmap level L covers 16^(L+1) samples and stores a per-channel
+// change-detection bitmask (bit c is 1 iff channel c toggled at least once
+// within that block), not a subsampled logic level.
 const int LogicSegment::MipMapScalePower = 4;
 const int LogicSegment::MipMapScaleFactor = 1 << MipMapScalePower;
 const float LogicSegment::LogMipMapScaleFactor = logf(MipMapScaleFactor);
@@ -95,7 +98,12 @@ void LogicSegment::downsampleTmain(const T*&in, T &acc, T &prev)
 template <>
 void LogicSegment::downsampleTmain<uint8_t>(const uint8_t*&in, uint8_t &acc, uint8_t &prev)
 {
-	// Handle 8 bit samples in 32 bit steps
+	// SWAR optimization: process four 8-bit samples per 32-bit word.
+	// Broadcasting `prev` into all 4 lanes means lane j computes
+	// (S[0..3] ^ prev) on iteration 0 and (S[k] ^ S[k-4]) thereafter.
+	// If any channel bit ever differs from `prev` across the 16 samples,
+	// at least one stride-4 XOR produces a 1 in that channel bit, which
+	// folds into `acc` when the 4 bytes of `acc32` are OR-reduced below.
 	uint32_t prev32 = prev | prev << 8 | prev << 16 | prev << 24;
 	uint32_t acc32 = acc;
 	const uint32_t *in32 = (const uint32_t*)in;
@@ -104,7 +112,7 @@ void LogicSegment::downsampleTmain<uint8_t>(const uint8_t*&in, uint8_t &acc, uin
 		acc32 |= prev32 ^ sample32;
 		prev32 = sample32;
 	}
-	// Reduce result back to uint8_t
+	// Carry the chronologically last byte of the final 4-byte word into `prev`.
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 	prev = (prev32 >> 24) & 0xff; // MSB is last
 #elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -122,7 +130,8 @@ void LogicSegment::downsampleTmain<uint8_t>(const uint8_t*&in, uint8_t &acc, uin
 template <>
 void LogicSegment::downsampleTmain<uint16_t>(const uint16_t*&in, uint16_t &acc, uint16_t &prev)
 {
-	// Handle 16 bit samples in 32 bit steps
+	// SWAR optimization: process two 16-bit samples per 32-bit word using
+	// the same broadcast-prev / stride-2 XOR equivalence as uint8_t above.
 	uint32_t prev32 = prev | prev << 16;
 	uint32_t acc32 = acc;
 	const uint32_t *in32 = (const uint32_t*)in;
@@ -131,7 +140,7 @@ void LogicSegment::downsampleTmain<uint16_t>(const uint16_t*&in, uint16_t &acc, 
 		acc32 |= prev32 ^ sample32;
 		prev32 = sample32;
 	}
-	// Reduce result back to uint16_t
+	// Carry the chronologically last 16-bit lane of the final word into `prev`.
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 	prev = (prev32 >> 16) & 0xffff; // MSB is last
 #elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -261,6 +270,10 @@ void LogicSegment::downsampleGeneric(const uint8_t *in, uint8_t *&out, uint64_t 
 inline uint64_t LogicSegment::unpack_sample(const uint8_t *ptr) const
 {
 #ifdef HAVE_UNALIGNED_LITTLE_ENDIAN_ACCESS
+	// Fast path reads a full 8-byte word; callers mask to the active channel bit
+	// so upper (8 - unit_size_) garbage bytes are ignored. Chunk tail padding
+	// (Segment::ChunkTailPadding = 7) guarantees this load never reads past
+	// the end of a chunk buffer.
 	return *(uint64_t*)ptr;
 #else
 	uint64_t value = 0;
@@ -299,6 +312,8 @@ inline uint64_t LogicSegment::unpack_sample(const uint8_t *ptr) const
 inline void LogicSegment::pack_sample(uint8_t *ptr, uint64_t value)
 {
 #ifdef HAVE_UNALIGNED_LITTLE_ENDIAN_ACCESS
+	// Relies on sequential forward writes into mipmap buffers that reserve
+	// sizeof(uint64_t) trailing padding (see reallocate_mipmap_level()).
 	*(uint64_t*)ptr = value;
 #else
 	switch (unit_size_) {
@@ -424,13 +439,18 @@ void LogicSegment::get_subsampled_edges(
 	if (end > get_sample_count())
 		end = get_sample_count();
 
+	// Pick the coarsest mipmap level whose block span (16^(min_level+1)) is
+	// at most min_length, so transitions narrower than one display quantum
+	// collapse into a single edge without scanning individual samples.
 	const uint64_t block_length = (uint64_t)max(min_length, 1.0f);
 	const unsigned int min_level = max((int)floorf(logf(min_length) /
 		LogMipMapScaleFactor) - 1, 0);
 	const uint64_t sig_mask = 1ULL << sig_index;
 
-	// Store the initial state
-	last_sample = (get_unpacked_sample(start) & sig_mask) != 0;
+	// When !first_change_only, callers (LogicSignal::paint_mid and
+	// get_surrounding_edges) rely on two sentinel entries framing the output:
+	// the initial state at `start` and the final state at `end + 1`.
+	last_sample = (get_unpacked_sample_unlocked(start) & sig_mask) != 0;
 	if (!first_change_only)
 		edges.emplace_back(index++, last_sample);
 
@@ -448,10 +468,10 @@ void LogicSegment::get_subsampled_edges(
 			const uint64_t final_index = min(end, pow2_ceil(index, MipMapScalePower));
 
 			for (; index < final_index &&
-					(index & ~((uint64_t)(~0) << MipMapScalePower)) != 0;
+					(index & MipMapScaleMask) != 0;
 					index++) {
 
-				const bool sample = (get_unpacked_sample(index) & sig_mask) != 0;
+				const bool sample = (get_unpacked_sample_unlocked(index) & sig_mask) != 0;
 
 				// If there was a change we cannot fast forward
 				if (sample != last_sample) {
@@ -469,20 +489,17 @@ void LogicSegment::get_subsampled_edges(
 				break;
 
 			// We can fast forward only if there was no change
-			const bool sample = (get_unpacked_sample(index) & sig_mask) != 0;
+			const bool sample = (get_unpacked_sample_unlocked(index) & sig_mask) != 0;
 			if (last_sample != sample)
 				fast_forward = false;
 		}
 
 		if (fast_forward) {
 
-			// Fast forward: This involves zooming out to higher
-			// levels of the mip map searching for changes, then
-			// zooming in on them to find the point where the edge
-			// begins.
-
-			// Slide right and zoom out at the beginnings of mip-map
-			// blocks until we encounter a change
+			// Hierarchical O(log N) fast-forward:
+			// Phase 1 (ascend): step right over change-free blocks, climbing one
+			// mipmap level whenever `offset` aligns to a parent block (multiple
+			// of 16), until a block reports a transition bit for `sig_mask`.
 			while (true) {
 				const int level_scale_power = (level + 1) * MipMapScalePower;
 				const uint64_t offset = index >> level_scale_power;
@@ -493,7 +510,7 @@ void LogicSegment::get_subsampled_edges(
 					(get_subsample(level, offset) &	sig_mask))
 					break;
 
-				if ((offset & ~((uint64_t)(~0) << MipMapScalePower)) == 0) {
+				if ((offset & MipMapScaleMask) == 0) {
 					// If we are now at the beginning of a
 					// higher level mip-map block ascend one
 					// level
@@ -508,8 +525,8 @@ void LogicSegment::get_subsampled_edges(
 				}
 			}
 
-			// Zoom in, and slide right until we encounter a change,
-			// and repeat until we reach min_level
+			// Phase 2 (descend): binary-style refinement back down to `min_level`
+			// to pinpoint the earliest child block containing the transition.
 			while (true) {
 				assert(mip_map_[level].data);
 
@@ -538,7 +555,7 @@ void LogicSegment::get_subsampled_edges(
 			// block
 			if (min_length < MipMapScaleFactor) {
 				for (; index < end; index++) {
-					const bool sample = (get_unpacked_sample(index) & sig_mask) != 0;
+					const bool sample = (get_unpacked_sample_unlocked(index) & sig_mask) != 0;
 					if (sample != last_sample)
 						break;
 				}
@@ -553,7 +570,7 @@ void LogicSegment::get_subsampled_edges(
 			break;
 
 		// Store the final state
-		const bool final_sample = (get_unpacked_sample(final_index - 1) & sig_mask) != 0;
+		const bool final_sample = (get_unpacked_sample_unlocked(final_index - 1) & sig_mask) != 0;
 		edges.emplace_back(index, final_sample);
 
 		index = final_index;
@@ -565,7 +582,7 @@ void LogicSegment::get_subsampled_edges(
 
 	// Add the final state
 	if (!first_change_only) {
-		const bool end_sample = get_unpacked_sample(end) & sig_mask;
+		const bool end_sample = get_unpacked_sample_unlocked(end) & sig_mask;
 		if (last_sample != end_sample)
 			edges.emplace_back(end, end_sample);
 		edges.emplace_back(end + 1, end_sample);
@@ -721,16 +738,18 @@ void LogicSegment::append_payload_to_mipmap()
 	}
 }
 
-uint64_t LogicSegment::get_unpacked_sample(uint64_t index) const
+uint64_t LogicSegment::get_unpacked_sample_unlocked(uint64_t index) const
 {
 	assert(index < sample_count_);
-
 	assert(unit_size_ <= 8);  // 8 * 8 = 64 channels
-	uint8_t data[8];
 
-	get_raw_samples(index, 1, data);
+	return unpack_sample(get_raw_sample_unlocked(index));
+}
 
-	return unpack_sample(data);
+uint64_t LogicSegment::get_unpacked_sample(uint64_t index) const
+{
+	lock_guard<recursive_mutex> lock(mutex_);
+	return get_unpacked_sample_unlocked(index);
 }
 
 uint64_t LogicSegment::get_subsample(int level, uint64_t offset) const
@@ -743,8 +762,10 @@ uint64_t LogicSegment::get_subsample(int level, uint64_t offset) const
 
 uint64_t LogicSegment::pow2_ceil(uint64_t x, unsigned int power)
 {
-	const uint64_t p = UINT64_C(1) << power;
-	return (x + p - 1) / p * p;
+	// Round x up to the next multiple of 2^power using bitmasking instead of
+	// a runtime 64-bit hardware division.
+	const uint64_t mask = (UINT64_C(1) << power) - 1;
+	return (x + mask) & ~mask;
 }
 
 } // namespace data
