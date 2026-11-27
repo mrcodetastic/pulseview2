@@ -111,6 +111,7 @@ void Logging::set_log_level(int level)
 
 QString Logging::get_log() const
 {
+	lock_guard<mutex> log_lock(log_mutex_);
 	return buffer_.join("<br />\n");
 }
 
@@ -216,6 +217,7 @@ int Logging::log_srd(void *cb_data, int loglevel, const char *format, va_list ar
 void Logging::on_setting_changed(const QString &key, const QVariant &value)
 {
 	if (key == GlobalSettings::Key_Log_BufferSize) {
+		lock_guard<mutex> log_lock(log_mutex_);
 		// Truncate buffer if needed
 		const int delta = buffer_.size() - value.toInt();
 		if (delta > 0)

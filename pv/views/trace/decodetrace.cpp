@@ -939,8 +939,8 @@ void DecodeTrace::draw_instant(const Annotation* a, QPainter &p, qreal x, int y)
 {
 	const QString text = a->annotations()->empty() ?
 		QString() : a->annotations()->back();
-	const qreal w = min((qreal)p.boundingRect(QRectF(), 0, text).width(),
-		0.0) + annotation_height_;
+	const qreal w = max((qreal)p.boundingRect(QRectF(), 0, text).width(),
+		(qreal)0.0) + annotation_height_;
 	const QRectF rect(x - w / 2, y - annotation_height_ / 2, w, annotation_height_);
 
 	p.drawRoundedRect(rect, annotation_height_ / 2, annotation_height_ / 2);

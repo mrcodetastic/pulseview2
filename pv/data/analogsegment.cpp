@@ -126,6 +126,7 @@ void AnalogSegment::get_samples(int64_t start_sample, int64_t end_sample,
 
 const pair<float, float> AnalogSegment::get_min_max() const
 {
+	lock_guard<recursive_mutex> lock(mutex_);
 	return make_pair(min_value_, max_value_);
 }
 
@@ -148,18 +149,27 @@ void AnalogSegment::get_envelope_section(EnvelopeSection &s,
 	// Each envelope level L aggregates 16^(L+1) raw samples into one (min, max)
 	// pair. Pick the coarsest level whose bucket width <= min_length, then shift
 	// [start, end) into that level's index space. Caller owns s.samples.
-	const unsigned int min_level = max((int)floorf(logf(min_length) /
-		LogEnvelopeScaleFactor) - 1, 0);
+	const unsigned int min_level = min<unsigned int>(
+		max((int)floorf(logf(min_length) / LogEnvelopeScaleFactor) - 1, 0),
+		ScaleStepCount - 1);
 	const unsigned int scale_power = (min_level + 1) *
 		EnvelopeScalePower;
 	start >>= scale_power;
 	end >>= scale_power;
 
+	const Envelope &level = envelope_levels_[min_level];
+	end = min(end, level.length);
+
 	s.start = start << scale_power;
-	s.scale = 1 << scale_power;
+	s.scale = UINT64_C(1) << scale_power;
+	if (start >= end || !level.samples) {
+		s.length = 0;
+		s.samples = nullptr;
+		return;
+	}
 	s.length = end - start;
 	s.samples = new EnvelopeSample[s.length];
-	memcpy(s.samples, envelope_levels_[min_level].samples + start,
+	memcpy(s.samples, level.samples + start,
 		s.length * sizeof(EnvelopeSample));
 }
 
@@ -201,8 +211,11 @@ void AnalogSegment::append_payload_to_envelope_levels()
 	}
 
 	// Break off if there are no new samples to compute
-	if (e0.length == prev_length)
+	if (e0.length == prev_length) {
+		if ((old_min_value != min_value_) || (old_max_value != max_value_))
+			owner_.min_max_changed(min_value_, max_value_);
 		return;
+	}
 
 	reallocate_envelope(e0);
 

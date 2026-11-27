@@ -130,7 +130,10 @@ Session::Session(DeviceManager &device_manager, QString name) :
 	capture_state_(Stopped),
 	stop_requested_(false),
 	cur_samplerate_(0),
-	data_saved_(true)
+	highest_segment_id_(-1),
+	out_of_memory_(false),
+	data_saved_(true),
+	frame_began_(false)
 {
 	// Use this name also for the QObject instance
 	setObjectName(name_);
@@ -421,7 +424,8 @@ void Session::save_settings(QSettings &settings) const
 void Session::restore_setup(QSettings &settings)
 {
 	// Reset main view, remove all other views
-	main_view_->reset_view_state();
+	if (main_view_)
+		main_view_->reset_view_state();
 	for (auto &v : vector< shared_ptr<views::ViewBase> >(views_)) {
 		if (v != main_view_)
 			remove_view(v);
@@ -700,12 +704,7 @@ void Session::set_device(shared_ptr<devices::Device> device)
 	all_signal_data_.clear();
 	signalbases_.clear();
 	cur_logic_segment_.reset();
-
-	for (auto& entry : cur_analog_segments_) {
-		shared_ptr<sigrok::Channel>(entry.first).reset();
-		shared_ptr<data::AnalogSegment>(entry.second).reset();
-	}
-
+	cur_analog_segments_.clear();
 	logic_data_.reset();
 
 	signals_changed();
@@ -2165,10 +2164,15 @@ void Session::feed_in_meta(shared_ptr<Meta> meta)
 
 void Session::feed_in_trigger()
 {
-	// The channel containing most samples should be most accurate
-	uint64_t sample_count = 0;
+	uint32_t segment_id = 0;  // Default segment when no frames are used
+	util::Timestamp timestamp;
 
 	{
+		lock_guard<recursive_mutex> lock(data_mutex_);
+
+		// The channel containing most samples should be most accurate
+		uint64_t sample_count = 0;
+
 		for (const shared_ptr<pv::data::SignalData>& d : all_signal_data_) {
 			assert(d);
 			uint64_t temp_count = 0;
@@ -2181,28 +2185,27 @@ void Session::feed_in_trigger()
 			if (temp_count > sample_count)
 				sample_count = temp_count;
 		}
+
+		if (frame_began_ && !cur_logic_segment_ && cur_analog_segments_.empty())
+			sample_count = 0;
+
+		// If a frame began, we'd ideally be able to use the highest segment ID for
+		// the trigger. However, as new segments are only created when logic or
+		// analog data comes in, this doesn't work if the trigger appears right
+		// after the beginning of the frame, before any sample data.
+		// For this reason, we use highest segment ID + 1 if no sample data came in
+		// yet and the highest segment ID otherwise.
+		if (frame_began_) {
+			segment_id = highest_segment_id_;
+			if (!cur_logic_segment_ && cur_analog_segments_.empty())
+				segment_id++;
+		}
+
+		// TODO Create timestamp from segment start time + segment's current sample count
+		timestamp = sample_count / get_samplerate();
+		trigger_list_.emplace_back(segment_id, timestamp);
 	}
 
-	if (frame_began_ && !cur_logic_segment_ && cur_analog_segments_.empty())
-		sample_count = 0;
-
-	uint32_t segment_id = 0;  // Default segment when no frames are used
-
-	// If a frame began, we'd ideally be able to use the highest segment ID for
-	// the trigger. However, as new segments are only created when logic or
-	// analog data comes in, this doesn't work if the trigger appears right
-	// after the beginning of the frame, before any sample data.
-	// For this reason, we use highest segment ID + 1 if no sample data came in
-	// yet and the highest segment ID otherwise.
-	if (frame_began_) {
-		segment_id = highest_segment_id_;
-		if (!cur_logic_segment_ && (cur_analog_segments_.size() == 0))
-			segment_id++;
-	}
-
-	// TODO Create timestamp from segment start time + segment's current sample count
-	util::Timestamp timestamp = sample_count / get_samplerate();
-	trigger_list_.emplace_back(segment_id, timestamp);
 	trigger_event(segment_id, timestamp);
 }
 

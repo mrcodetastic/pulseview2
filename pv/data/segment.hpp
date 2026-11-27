@@ -121,7 +121,7 @@ protected:
 	unsigned int unit_size_;
 	int iterator_count_;
 	bool mem_optimization_requested_;
-	bool is_complete_;
+	atomic<bool> is_complete_;
 
 	friend struct SegmentTest::SmallSize8Single;
 	friend struct SegmentTest::MediumSize8Single;

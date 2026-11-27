@@ -117,12 +117,6 @@ AnalogSignal::AnalogSignal(pv::Session &session, shared_ptr<data::SignalBase> ba
 		this, SLOT(on_min_max_changed(float, float)));
 
 	GlobalSettings settings;
-	show_sampling_points_ =
-		settings.value(GlobalSettings::Key_View_ShowSamplingPoints).toBool();
-	fill_high_areas_ =
-		settings.value(GlobalSettings::Key_View_FillSignalHighAreas).toBool();
-	high_fill_color_ = QColor::fromRgba(settings.value(
-		GlobalSettings::Key_View_FillSignalHighAreaColor).value<uint32_t>());
 	show_analog_minor_grid_ =
 		settings.value(GlobalSettings::Key_View_ShowAnalogMinorGrid).toBool();
 	conversion_threshold_disp_mode_ =
@@ -135,9 +129,7 @@ AnalogSignal::AnalogSignal(pv::Session &session, shared_ptr<data::SignalBase> ba
 
 std::map<QString, QVariant> AnalogSignal::save_settings() const
 {
-	LogicSignal::save_settings();
-
-	std::map<QString, QVariant> result;
+	std::map<QString, QVariant> result = LogicSignal::save_settings();
 
 	result["pos_vdivs"] = pos_vdivs_;
 	result["neg_vdivs"] = neg_vdivs_;
@@ -373,7 +365,7 @@ void AnalogSignal::paint_grid(QPainter &p, int y, int left, int right)
 		}
 	}
 
-	if ((pos_vdivs_ > 0) && show_analog_minor_grid_) {
+	if ((neg_vdivs_ > 0) && show_analog_minor_grid_) {
 		for (int i = 0; i < neg_vdivs_; i++) {
 			const float dy = i * div_height_;
 			grid_minor_lines_.emplace_back(left, y + (dy + 0.25f * div_height_), right, y + (dy + 0.25f * div_height_));
@@ -438,7 +430,7 @@ void AnalogSignal::paint_trace(QPainter &p,
 		// Fetch next block of samples if we finished the current one
 		if (block_sample == TracePaintBlockSize) {
 			block_sample = 0;
-			sample_count = min(points_count - sample, TracePaintBlockSize);
+			sample_count = min(end - sample + 1, TracePaintBlockSize);
 			segment->get_samples(sample, sample + sample_count, sample_block_.data());
 		}
 
@@ -510,13 +502,16 @@ void AnalogSignal::paint_envelope(QPainter &p,
 	AnalogSegment::EnvelopeSection e;
 	segment->get_envelope_section(e, start, end, samples_per_pixel);
 
-	if (e.length < 2)
+	if (e.length < 2) {
+		delete[] e.samples;
 		return;
+	}
 
 	p.setPen(QPen(Qt::NoPen));
 	p.setBrush(base_->color());
 
-	envelope_rects_.assign(e.length, QRectF());
+	const size_t rect_count = static_cast<size_t>(e.length - 1);
+	envelope_rects_.resize(rect_count);
 	QRectF *rect = envelope_rects_.data();
 
 	for (uint64_t sample = 0; sample < e.length - 1; sample++) {
@@ -542,7 +537,7 @@ void AnalogSignal::paint_envelope(QPainter &p,
 		*rect++ = QRectF(x, t, 1.0f, h);
 	}
 
-	p.drawRects(envelope_rects_.data(), e.length);
+	p.drawRects(envelope_rects_.data(), rect_count);
 
 	delete[] e.samples;
 }
@@ -945,16 +940,7 @@ void AnalogSignal::hover_point_changed(const QPoint &hp)
 
 void AnalogSignal::on_setting_changed(const QString &key, const QVariant &value)
 {
-	Signal::on_setting_changed(key, value);
-
-	if (key == GlobalSettings::Key_View_ShowSamplingPoints)
-		show_sampling_points_ = value.toBool();
-
-	if (key == GlobalSettings::Key_View_FillSignalHighAreas)
-		fill_high_areas_ = value.toBool();
-
-	if (key == GlobalSettings::Key_View_FillSignalHighAreaColor)
-		high_fill_color_ = QColor::fromRgba(value.value<uint32_t>());
+	LogicSignal::on_setting_changed(key, value);
 
 	if (key == GlobalSettings::Key_View_ShowAnalogMinorGrid)
 		show_analog_minor_grid_ = value.toBool();

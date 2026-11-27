@@ -76,7 +76,9 @@ StoreSession::StoreSession(const string &file_name,
 	segment_(segment), collection_(collection), save_setup_(save_setup),
 	interrupt_(false),
 	units_stored_(0),
-	unit_count_(0)
+	unit_count_(0),
+	start_sample_(0),
+	sample_count_(0)
 {
 }
 
@@ -90,33 +92,39 @@ pair<int, int> StoreSession::progress() const
 	return make_pair(units_stored_.load(), unit_count_.load());
 }
 
-const QString& StoreSession::error() const
+QString StoreSession::error() const
 {
 	lock_guard<mutex> lock(mutex_);
 	return error_;
 }
 
+void StoreSession::set_error(const QString &msg)
+{
+	lock_guard<mutex> lock(mutex_);
+	error_ = msg;
+}
+
 bool StoreSession::start()
 {
 	if (session_.get_capture_state() != Session::Stopped) {
-		error_ = tr("Stop the capture before saving.");
+		set_error(tr("Stop the capture before saving."));
 		return false;
 	}
 	if (collection_) {
 		if (output_format_->name() != "srzip" || sample_range_.first != sample_range_.second ||
 			!session_.captured_segment_count()) {
-			error_ = tr("A collection requires digital segments, not a selected range.");
+			set_error(tr("A collection requires digital segments, not a selected range."));
 			return false;
 		}
 		for (const auto& signal : session_.signalbases())
 			if (signal->enabled() && signal->type() == data::SignalBase::AnalogChannel) {
-				error_ = tr("Capture collections currently support digital inputs only.");
+				set_error(tr("Capture collections currently support digital inputs only."));
 				return false;
 			}
 		try {
 			thread_ = std::thread(&StoreSession::store_collection_proc, this);
 		} catch (const std::exception& error) {
-			error_ = tr("Error while saving: ") + error.what();
+			set_error(tr("Error while saving: ") + error.what());
 			return false;
 		}
 		return true;
@@ -148,7 +156,7 @@ bool StoreSession::start_single(bool async, const std::atomic<bool> *external_in
 					ldata->logic_segments();
 
 				if (segment_ >= lsegments.size()) {
-					error_ = tr("Can't save logic channel without data.");
+					set_error(tr("Can't save logic channel without data."));
 					return false;
 				}
 
@@ -165,7 +173,7 @@ bool StoreSession::start_single(bool async, const std::atomic<bool> *external_in
 				adata->analog_segments();
 
 			if (segment_ >= asegments.size()) {
-				error_ = tr("Can't save analog channel without data.");
+				set_error(tr("Can't save analog channel without data."));
 				return false;
 			}
 
@@ -177,33 +185,28 @@ bool StoreSession::start_single(bool async, const std::atomic<bool> *external_in
 	}
 
 	if (!any_segment) {
-		error_ = tr("No channels enabled.");
+		set_error(tr("No channels enabled."));
 		return false;
 	}
 
 	// Check whether the user wants to export a certain sample range
-	uint64_t end_sample;
-
+	const uint64_t total_samples = any_segment->get_sample_count();
 	if (sample_range_.first == sample_range_.second) {
 		// No sample range specified, save everything we have
 		start_sample_ = 0;
-		sample_count_ =	any_segment->get_sample_count();
+		sample_count_ = total_samples;
 	} else {
-		if (sample_range_.first > sample_range_.second) {
-			start_sample_ = sample_range_.second;
-			end_sample = min(sample_range_.first, any_segment->get_sample_count());
-			sample_count_ = end_sample - start_sample_;
-		} else {
-			start_sample_ = sample_range_.first;
-			end_sample = min(sample_range_.second, any_segment->get_sample_count());
-			sample_count_ = end_sample - start_sample_;
-		}
-	}
+		const uint64_t req_start = std::min(sample_range_.first, sample_range_.second);
+		const uint64_t req_end = std::max(sample_range_.first, sample_range_.second);
 
-	// Make sure the sample range is valid
-	if (start_sample_ > any_segment->get_sample_count()) {
-		error_ = tr("Can't save range without sample data.");
-		return false;
+		// Validate start before subtracting so uint64_t cannot underflow.
+		if (req_start > total_samples) {
+			set_error(tr("Can't save range without sample data."));
+			return false;
+		}
+
+		start_sample_ = req_start;
+		sample_count_ = min(req_end, total_samples) - start_sample_;
 	}
 
 	// Begin storing
@@ -246,7 +249,7 @@ bool StoreSession::start_single(bool async, const std::atomic<bool> *external_in
 		else
 			store_proc(achannel_list, asegment_list, lsegment);
 	} catch (const std::exception& error) {
-		error_ = tr("Error while saving: ") + error.what();
+		set_error(tr("Error while saving: ") + error.what());
 		return false;
 	}
 
@@ -323,7 +326,7 @@ void StoreSession::store_collection_proc()
 			store_successful();
 		}
 	} catch (const std::exception& error) {
-		if (!interrupt_) error_ = tr("Error while saving collection: ") + error.what();
+		if (!interrupt_) set_error(tr("Error while saving collection: ") + error.what());
 	}
 	units_stored_ = unit_count_ = 0;
 	finished_ = true;
@@ -409,7 +412,7 @@ void StoreSession::store_proc(vector< shared_ptr<data::SignalBase> > achannel_li
 					output_stream_ << ldata_str;
 			}
 		} catch (const std::exception& error) {
-			error_ = tr("Error while saving: ") + error.what();
+			set_error(tr("Error while saving: ") + error.what());
 			break;
 		}
 
@@ -424,7 +427,7 @@ void StoreSession::store_proc(vector< shared_ptr<data::SignalBase> > achannel_li
 		if (output_stream_.is_open())
 			output_stream_ << ldata_str;
 	} catch (const std::exception& error) {
-		error_ = tr("Error while saving: ") + error.what();
+		set_error(tr("Error while saving: ") + error.what());
 	}
 
 	// Finish all output I/O before telling the session that its data is saved.
@@ -433,11 +436,11 @@ void StoreSession::store_proc(vector< shared_ptr<data::SignalBase> > achannel_li
 		try {
 			output_stream_.close();
 		} catch (const std::exception& error) {
-			error_ = tr("Error while saving: ") + error.what();
+			set_error(tr("Error while saving: ") + error.what());
 		}
 	}
 
-	if (!is_interrupted() && !sample_count_ && error_.isEmpty())
+	if (!is_interrupted() && !sample_count_ && error().isEmpty())
 		store_successful();
 
 	// Zeroing the progress variables indicates that the worker has finished,

@@ -372,7 +372,7 @@ vector<LogicSegment::EdgePair> LogicSignal::get_nearest_level_changes(uint64_t s
 		1.0, view->snap_distance() * samples_per_pixel);
 
 	segment->get_surrounding_edges(edges, sample_pos,
-		samples_per_pixel / Oversampling, base_->index(), search_radius);
+		samples_per_pixel / Oversampling, base_->logic_bit_index(), search_radius);
 
 	if (edges.empty())
 		return vector<LogicSegment::EdgePair>();
@@ -614,22 +614,26 @@ void LogicSignal::modify_trigger()
 
 const QIcon* LogicSignal::get_icon(const char *path)
 {
-	if (!icon_cache_.contains(path)) {
-		const QIcon *icon = new QIcon(path);
-		icon_cache_.insert(path, icon);
+	const QString key = QString::fromUtf8(path);
+	const QIcon *icon = icon_cache_.object(key);
+	if (!icon) {
+		icon = new QIcon(key);
+		icon_cache_.insert(key, icon);
 	}
 
-	return icon_cache_.take(path);
+	return icon;
 }
 
 const QPixmap* LogicSignal::get_pixmap(const char *path)
 {
-	if (!pixmap_cache_.contains(path)) {
-		const QPixmap *pixmap = new QPixmap(path);
-		pixmap_cache_.insert(path, pixmap);
+	const QString key = QString::fromUtf8(path);
+	const QPixmap *pixmap = pixmap_cache_.object(key);
+	if (!pixmap) {
+		pixmap = new QPixmap(key);
+		pixmap_cache_.insert(key, pixmap);
 	}
 
-	return pixmap_cache_.take(path);
+	return pixmap;
 }
 
 void LogicSignal::update_logic_level_offsets()

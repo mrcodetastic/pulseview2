@@ -382,7 +382,7 @@ private:
 	std::thread sampling_thread_;
 
 	bool out_of_memory_;
-	bool data_saved_;
+	std::atomic<bool> data_saved_;
 	bool frame_began_;
 
 	QElapsedTimer acq_time_;
