@@ -75,7 +75,7 @@ Q_SIGNALS:
 
 private:
 	bool initialized_ = false;
-	int buffer_size_;
+	int buffer_size_ = 500;
 	QStringList buffer_;
 	mutable mutex log_mutex_;
 };

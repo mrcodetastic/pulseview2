@@ -417,6 +417,46 @@ RecentDevice DeviceManager::make_recent_device(
 	return entry;
 }
 
+namespace {
+
+bool has_real_serial(const QString &serial)
+{
+	return !serial.isEmpty() && serial != "0";
+}
+
+bool same_recent_device(const RecentDevice &a, const RecentDevice &b)
+{
+	if (a.driver_name != b.driver_name)
+		return false;
+
+	if (has_real_serial(a.serial_number) && has_real_serial(b.serial_number)) {
+		return a.vendor == b.vendor &&
+			a.model == b.model &&
+			a.serial_number == b.serial_number;
+	}
+
+	// For USB devices without a serial number (e.g. Saleae Logic clones),
+	// conn is a transient bus/port path and should not create duplicates.
+	if (a.interface_type == "usb" && b.interface_type == "usb") {
+		return a.vendor == b.vendor &&
+			a.model == b.model &&
+			a.display_name == b.display_name;
+	}
+
+	if (!a.conn.isEmpty() && !b.conn.isEmpty()) {
+		return a.interface_type == b.interface_type &&
+			a.conn == b.conn &&
+			a.vendor == b.vendor &&
+			a.model == b.model;
+	}
+
+	return a.vendor == b.vendor &&
+		a.model == b.model &&
+		a.display_name == b.display_name;
+}
+
+} // namespace
+
 vector<RecentDevice> DeviceManager::recent_devices() const
 {
 	vector<RecentDevice> result;
@@ -433,8 +473,20 @@ vector<RecentDevice> DeviceManager::recent_devices() const
 		entry.interface_type = settings.value("interface_type", "usb").toString();
 		entry.conn = settings.value("conn").toString();
 		entry.serialcomm = settings.value("serialcomm").toString();
-		if (entry.is_valid())
+		if (!entry.is_valid())
+			continue;
+
+		auto existing = std::find_if(result.begin(), result.end(),
+			[&](const RecentDevice &r) { return same_recent_device(r, entry); });
+		if (existing != result.end()) {
+			if (existing->conn.isEmpty() && !entry.conn.isEmpty()) {
+				existing->interface_type = entry.interface_type;
+				existing->conn = entry.conn;
+				existing->serialcomm = entry.serialcomm;
+			}
+		} else {
 			result.push_back(entry);
+		}
 	}
 	settings.endArray();
 	return result;
@@ -451,13 +503,7 @@ void DeviceManager::record_recent_device(const RecentDevice &entry)
 	// Deduplicate against existing entries and preserve saved serial/TCP
 	// parameters when re-recording a device selected outside Connect dialog.
 	for (auto it = entries.begin(); it != entries.end(); ) {
-		const bool same_dev =
-			it->driver_name == updated.driver_name &&
-			it->vendor == updated.vendor &&
-			it->model == updated.model &&
-			it->serial_number == updated.serial_number &&
-			(updated.conn.isEmpty() || it->conn == updated.conn);
-		if (same_dev) {
+		if (same_recent_device(*it, updated)) {
 			if (updated.conn.isEmpty() && !it->conn.isEmpty()) {
 				updated.interface_type = it->interface_type;
 				updated.conn = it->conn;

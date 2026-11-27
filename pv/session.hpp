@@ -199,6 +199,7 @@ public:
 	bool has_reconnect_target() const;
 	QString reconnect_target_name() const;
 	bool reconnect_last_device(QString *error_out = nullptr);
+	bool rebind_reconnected_device(shared_ptr<devices::HardwareDevice> found);
 	void start_capture(function<void (const QString)> error_handler);
 	void stop_capture();
 	void request_stop_capture();
@@ -334,6 +335,7 @@ private:
 	shared_ptr<pv::toolbars::MainBar> main_bar_;
 
 	void complete_active_segments_locked();
+	void attach_device_callbacks();
 
 	// Locking invariant: whenever both mutexes are needed, ALWAYS acquire
 	// data_mutex_ before sampling_mutex_ (never the reverse) to prevent deadlock.

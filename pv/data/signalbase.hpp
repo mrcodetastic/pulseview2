@@ -131,6 +131,7 @@ public:
 	 * Generated channels don't have a SR channel.
 	 */
 	shared_ptr<sigrok::Channel> channel() const;
+	void set_channel(shared_ptr<sigrok::Channel> channel);
 
 	/**
 	 * Returns whether this channel is generated or a channel associated with the device.

@@ -119,7 +119,7 @@ void Logging::log(const QString &text, int source)
 {
 	lock_guard<mutex> log_lock(log_mutex_);
 
-	if (buffer_.size() >= buffer_size_)
+	if (buffer_size_ > 0 && buffer_.size() >= buffer_size_ && !buffer_.isEmpty())
 		buffer_.removeFirst();
 
 	QString s;

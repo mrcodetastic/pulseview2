@@ -738,33 +738,7 @@ void Session::set_device(shared_ptr<devices::Device> device)
 			// Device may not expose SAMPLERATE before capture starts.
 		}
 
-		device_->connect_datafeed([=]
-			(shared_ptr<sigrok::Device> device, shared_ptr<Packet> packet) {
-				data_feed_in(device, packet);
-			});
-
-		device_->set_frame_callback([this](bool begin) {
-			if (begin) {
-				{ lock_guard<recursive_mutex> lock(data_mutex_);
-				  capture_outcome_.clear(); capture_error_.clear(); }
-				feed_in_frame_begin();
-			} else {
-				std::vector<util::Timestamp> triggers;
-				if (acquisition_received_samples_) {
-					const util::Timestamp segment_duration =
-						util::Timestamp(get_segment_sample_count(highest_segment_id_)) / get_samplerate();
-					for (const auto& text : device_->frame_triggers()) {
-						const util::Timestamp time(text);
-						if (time <= segment_duration)
-							triggers.push_back(time);
-					}
-				}
-				restore_segment_triggers(triggers);
-				uint64_t origin;
-				if (acquisition_received_samples_ && device_->frame_origin(origin)) set_segment_origin(origin);
-				feed_in_frame_end();
-			}
-		});
+		attach_device_callbacks();
 		update_signals();
 
 		if (auto hw = dynamic_pointer_cast<devices::HardwareDevice>(device_)) {
@@ -778,6 +752,106 @@ void Session::set_device(shared_ptr<devices::Device> device)
 	}
 
 	device_changed();
+}
+
+void Session::attach_device_callbacks()
+{
+	if (!device_)
+		return;
+
+	device_->connect_datafeed([=]
+		(shared_ptr<sigrok::Device> device, shared_ptr<Packet> packet) {
+			data_feed_in(device, packet);
+		});
+
+	device_->set_frame_callback([this](bool begin) {
+		if (begin) {
+			{ lock_guard<recursive_mutex> lock(data_mutex_);
+			  capture_outcome_.clear(); capture_error_.clear(); }
+			feed_in_frame_begin();
+		} else {
+			std::vector<util::Timestamp> triggers;
+			if (acquisition_received_samples_) {
+				const util::Timestamp segment_duration =
+					util::Timestamp(get_segment_sample_count(highest_segment_id_)) / get_samplerate();
+				for (const auto& text : device_->frame_triggers()) {
+					const util::Timestamp time(text);
+					if (time <= segment_duration)
+						triggers.push_back(time);
+				}
+			}
+			restore_segment_triggers(triggers);
+			uint64_t origin;
+			if (acquisition_received_samples_ && device_->frame_origin(origin)) set_segment_origin(origin);
+			feed_in_frame_end();
+		}
+	});
+}
+
+bool Session::rebind_reconnected_device(shared_ptr<devices::HardwareDevice> found)
+{
+	if (!found)
+		return false;
+
+	// Only rebind in place if the session already has hardware channels whose
+	// type and index layout match the reconnected device, preserving captured
+	// waveforms, decoders, math channels, and view state.
+	vector<shared_ptr<data::SignalBase>> hw_signals;
+	for (const auto &sb : signalbases_) {
+		if (sb && sb->channel())
+			hw_signals.push_back(sb);
+	}
+	if (hw_signals.empty())
+		return false;
+
+	bool rebound_in_place = false;
+	try {
+		found->open();
+		const auto sr_dev = found->device();
+		if (sr_dev) {
+			const auto new_channels = sr_dev->channels();
+			bool channels_match = (new_channels.size() == hw_signals.size());
+			if (channels_match) {
+				for (size_t i = 0; i < hw_signals.size(); i++) {
+					const auto old_ch = hw_signals[i]->channel();
+					if (!old_ch ||
+						old_ch->type() != new_channels[i]->type() ||
+						old_ch->index() != new_channels[i]->index()) {
+						channels_match = false;
+						break;
+					}
+				}
+			}
+
+			if (channels_match) {
+				for (size_t i = 0; i < hw_signals.size(); i++)
+					hw_signals[i]->set_channel(new_channels[i]);
+
+				device_ = found;
+				device_reconnect_needed_ = false;
+				attach_device_callbacks();
+
+				const RecentDevice rec = device_manager_.make_recent_device(found);
+				if (rec.is_valid()) {
+					device_manager_.record_recent_device(rec);
+					const auto recent = device_manager_.recent_devices();
+					last_hardware_device_ = recent.empty() ? rec : recent.front();
+				}
+				rebound_in_place = true;
+			}
+		}
+	} catch (const QString &) {
+		return false;
+	} catch (const sigrok::Error &) {
+		return false;
+	} catch (const std::exception &) {
+		return false;
+	}
+
+	if (!rebound_in_place) {
+		try { found->close(); } catch (...) { }
+	}
+	return rebound_in_place;
 }
 
 bool Session::has_reconnect_target() const
@@ -885,11 +959,21 @@ bool Session::reconnect_last_device(QString *error_out)
 		return false;
 	}
 
-	set_device(found);
-	if (!device_ || !device_->device()) {
-		if (error_out)
-			*error_out = tr("Found %1, but failed to open it.").arg(target.display_name);
-		return false;
+	const bool rebound_in_place = rebind_reconnected_device(found);
+
+	if (!rebound_in_place) {
+		if (!found) {
+			device_changed();
+			if (error_out)
+				*error_out = tr("Found %1, but failed to open it.").arg(target.display_name);
+			return false;
+		}
+		set_device(found);
+		if (!device_ || !device_->device()) {
+			if (error_out)
+				*error_out = tr("Found %1, but failed to open it.").arg(target.display_name);
+			return false;
+		}
 	}
 
 	// Restore capture settings and channel configuration
@@ -908,6 +992,9 @@ bool Session::reconnect_last_device(QString *error_out)
 				Glib::Variant<guint64>::create(saved_limit_samples));
 		} catch (...) { }
 	}
+	try {
+		cur_samplerate_ = device_->read_config<uint64_t>(ConfigKey::SAMPLERATE);
+	} catch (Error&) { }
 
 	const auto channels = sr_dev->channels();
 	if (channels.size() == saved_channel_enabled.size()) {

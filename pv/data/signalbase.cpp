@@ -154,6 +154,11 @@ shared_ptr<sigrok::Channel> SignalBase::channel() const
 	return channel_;
 }
 
+void SignalBase::set_channel(shared_ptr<sigrok::Channel> channel)
+{
+	channel_ = std::move(channel);
+}
+
 bool SignalBase::is_generated() const
 {
 	// Only signals associated with a device have a corresponding sigrok channel

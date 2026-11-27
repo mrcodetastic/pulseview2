@@ -29,6 +29,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QObject>
+#include <QSettings>
 #include <QString>
 
 #include <libsigrokcxx/libsigrokcxx.hpp>
@@ -58,17 +59,27 @@ using std::vector;
 namespace {
 
 struct ScopedQApplication {
-	int argc = 1;
-	char exe[20] = "pulseview-test";
-	char *argv[2] = {exe, nullptr};
-	std::unique_ptr<QApplication> owned_app;
+	static std::unique_ptr<QApplication>& app_holder()
+	{
+		static std::unique_ptr<QApplication> app;
+		return app;
+	}
 
 	ScopedQApplication()
 	{
-		if (!QCoreApplication::instance())
-			owned_app.reset(new QApplication(argc, argv));
+		if (!QCoreApplication::instance()) {
+			static int argc = 1;
+			static char exe[] = "pulseview-test";
+			static char *argv[] = {exe, nullptr};
+			app_holder().reset(new QApplication(argc, argv));
+		}
 	}
 };
+
+struct BugfixAppCleanup {
+	~BugfixAppCleanup() { ScopedQApplication::app_holder().reset(); }
+};
+BOOST_GLOBAL_FIXTURE(BugfixAppCleanup);
 
 } // namespace
 
@@ -392,6 +403,79 @@ BOOST_AUTO_TEST_CASE(session_reports_configured_samplerate_before_segments)
 
 	session.set_configured_samplerate(1000000);
 	BOOST_CHECK_EQUAL(session.get_samplerate(), 1000000.0);
+}
+
+BOOST_AUTO_TEST_CASE(recent_devices_deduplicates_entries)
+{
+	ScopedQApplication app;
+
+	QSettings settings;
+	settings.remove("RecentDevices");
+
+	shared_ptr<sigrok::Context> context = sigrok::Context::create();
+	pv::DeviceManager device_manager(context, {}, false);
+
+	pv::RecentDevice a;
+	a.display_name = "Saleae Logic";
+	a.driver_name = "fx2lafw";
+	a.vendor = "Saleae";
+	a.model = "Logic";
+	a.serial_number = "";
+	a.interface_type = "usb";
+	a.conn = "";
+
+	pv::RecentDevice b = a;
+	b.conn = "usb/1-2";
+
+	pv::RecentDevice c = a;
+	c.conn = "usb/1-4";
+
+	device_manager.record_recent_device(a);
+	device_manager.record_recent_device(b);
+	device_manager.record_recent_device(c);
+
+	const auto list = device_manager.recent_devices();
+	BOOST_REQUIRE_EQUAL(list.size(), 1u);
+	BOOST_CHECK_EQUAL(list[0].driver_name.toStdString(), "fx2lafw");
+
+	settings.remove("RecentDevices");
+}
+
+BOOST_AUTO_TEST_CASE(reconnect_last_device_preserves_existing_capture)
+{
+	ScopedQApplication app;
+
+	shared_ptr<sigrok::Context> context = sigrok::Context::create();
+	pv::DeviceManager device_manager(context, {}, false);
+	pv::Session session(device_manager, "bugfix_test");
+
+	auto sr_dev = context->drivers().at("demo")->scan().at(0);
+	auto hw_dev = make_shared<pv::devices::HardwareDevice>(context, sr_dev);
+	session.set_device(hw_dev);
+
+	shared_ptr<pv::data::Logic> logic;
+	for (const auto &s : session.signalbases()) {
+		if (s->type() == pv::data::SignalBase::LogicChannel && s->logic_data()) {
+			logic = s->logic_data();
+			break;
+		}
+	}
+	BOOST_REQUIRE(logic != nullptr);
+
+	auto seg = make_shared<pv::data::LogicSegment>(*logic, 0, 1, 1000000);
+	uint8_t samples[32] = {0xAA};
+	seg->append_payload(samples, sizeof(samples));
+	logic->push_segment(seg);
+	BOOST_REQUIRE_EQUAL(logic->max_sample_count(), 32u);
+
+	// Rebinding a freshly scanned matching device must keep the existing captured
+	// segment intact and update each SignalBase's underlying sigrok::Channel.
+	auto sr_dev2 = context->drivers().at("demo")->scan().at(0);
+	auto hw_dev2 = make_shared<pv::devices::HardwareDevice>(context, sr_dev2);
+	BOOST_REQUIRE(session.rebind_reconnected_device(hw_dev2));
+	BOOST_CHECK_EQUAL(logic->max_sample_count(), 32u);
+	BOOST_CHECK(session.device() == hw_dev2);
+	BOOST_CHECK(session.signalbases().front()->channel() == sr_dev2->channels().front());
 }
 
 BOOST_AUTO_TEST_SUITE_END()
