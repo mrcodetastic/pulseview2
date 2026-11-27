@@ -32,6 +32,7 @@ Automated GitHub Releases bundling **PulseView2** with the full sigrok stack (`l
 - **macOS (`arm64` / Apple Silicon):** Self-contained `.dmg` app bundle
 - **Linux (Ubuntu 26.04 LTS `amd64`):** `.deb` package with `sigrok-cli` and udev rules
 
+![Screenshot from Windows 11](pulseview_CCJKq72LBa.png)
 ---
 
 ## Building from Source
