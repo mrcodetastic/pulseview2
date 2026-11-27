@@ -272,8 +272,8 @@ jobs:
               apt-get update
               apt-get install -y --no-install-recommends /output/*.deb
 
-              dpkg-query -W -f="${Status}\n" pulseview2
-              dpkg-query -W -f="${Status}" pulseview2 | grep -q "install ok installed"
+              dpkg-query -W -f="\${Status}\n" pulseview2
+              dpkg-query -W -f="\${Status}" pulseview2 | grep -q "install ok installed"
 
               for b in /usr/bin/pulseview /usr/bin/sigrok-cli; do
                 echo "--- ldd $b ---"
