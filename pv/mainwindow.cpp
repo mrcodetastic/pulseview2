@@ -691,11 +691,7 @@ void MainWindow::setup_menu_bar()
 
 	menu_action_save_selection_as_ = file_menu->addAction(
 		QIcon::fromTheme("document-save-as", QIcon(":/icons/document-save-as.png")), tr("Save Selected &Range As..."));
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 	set_menu_hint_shortcut(menu_action_save_selection_as_, QKeySequence(Qt::CTRL | Qt::Key_R));
-#else
-	set_menu_hint_shortcut(menu_action_save_selection_as_, QKeySequence(Qt::CTRL + Qt::Key_R));
-#endif
 	menu_action_save_selection_as_->setStatusTip(tr("Save only the range between measurement cursors"));
 	connect(menu_action_save_selection_as_, &QAction::triggered, this, [this] {
 		if (auto mb = active_main_bar())
@@ -777,11 +773,7 @@ void MainWindow::setup_menu_bar()
 	});
 
 	menu_action_reconnect_ = capture_menu->addAction(icon_reload_, tr("&Reconnect Last Device"));
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 	set_menu_hint_shortcut(menu_action_reconnect_, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
-#else
-	set_menu_hint_shortcut(menu_action_reconnect_, QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_R));
-#endif
 	menu_action_reconnect_->setStatusTip(tr("Rescan and reconnect to the last used hardware device"));
 	connect(menu_action_reconnect_, &QAction::triggered, this, [this] {
 		if (auto mb = active_main_bar()) {

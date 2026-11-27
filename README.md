@@ -37,7 +37,7 @@ Automated GitHub Releases bundling **PulseView2** with the full sigrok stack (`l
 
 ## Building from Source
 
-PulseView2 builds with CMake, Ninja, Qt 6 (or Qt 5), Boost, `glibmm`, `libsigrokcxx`, and `libsigrokdecode` (targeting `libsigrok` / `libsigrokdecode` `master`):
+PulseView2 builds with CMake (>= 3.16), Ninja, Qt 6 (>= 6.2), Boost, `glibmm`, `libsigrokcxx`, and `libsigrokdecode` (targeting `libsigrok` / `libsigrokdecode` `master`):
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTS=ON

@@ -19,21 +19,11 @@
 ## along with this program.  If not, see <http://www.gnu.org/licenses/>.
 ##
 
-cmake_minimum_required(VERSION 2.8.12...3.31.5)
+cmake_minimum_required(VERSION 3.16...3.31.5)
 
 project(pulseview C CXX)
 
 include(GNUInstallDirs)
-
-# Let AUTOMOC and AUTOUIC process GENERATED files.
-if(POLICY CMP0071)
-	cmake_policy(SET CMP0071 NEW)
-endif()
-
-# Only interpret if() arguments as variables or keywords when unquoted.
-if(POLICY CMP0054)
-	cmake_policy(SET CMP0054 NEW)
-endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/CMake")
 
@@ -78,39 +68,14 @@ include(memaccess)
 
 find_package(PkgConfig)
 
-if(CMAKE_VERSION VERSION_EQUAL "3.8.0" OR CMAKE_VERSION VERSION_GREATER "3.8.0")
-	check_cxx_compiler_flag("-std=c++17" HAVE_STD_CXX_17)
-	check_cxx_compiler_flag("-std=c++14" HAVE_STD_CXX_14)
-	check_cxx_compiler_flag("-std=c++11" HAVE_STD_CXX_11)
-	if(HAVE_STD_CXX_17)
-		message(STATUS "Using C++17 for the application build")
-		set(CMAKE_CXX_STANDARD 17)
-		set(REQUIRED_STD_CXX_FLAGS "-std=c++17")
-	elseif(HAVE_STD_CXX_14)
-		message(STATUS "Using C++14 for the application build")
-		set(CMAKE_CXX_STANDARD 14)
-		set(REQUIRED_STD_CXX_FLAGS "-std=c++14")
-	elseif(HAVE_STD_CXX_11)
-		message(STATUS "Using C++11 for the application build")
-		set(CMAKE_CXX_STANDARD 11)
-		set(REQUIRED_STD_CXX_FLAGS "-std=c++11")
-	else()
-		message(FATAL_ERROR "Need modern C++, at least language standard 11")
-	endif()
+check_cxx_compiler_flag("-std=c++17" HAVE_STD_CXX_17)
+if(HAVE_STD_CXX_17)
+	message(STATUS "Using C++17 for the application build")
+	set(CMAKE_CXX_STANDARD 17)
+	set(CMAKE_CXX_STANDARD_REQUIRED ON)
+	set(REQUIRED_STD_CXX_FLAGS "-std=c++17")
 else()
-	check_cxx_compiler_flag("-std=c++14" HAVE_STD_CXX_14)
-	check_cxx_compiler_flag("-std=c++11" HAVE_STD_CXX_11)
-	if(HAVE_STD_CXX_14)
-		message(STATUS "Using C++14 for the application build")
-		set(CMAKE_CXX_STANDARD 14)
-		set(REQUIRED_STD_CXX_FLAGS "-std=c++14")
-	elseif(HAVE_STD_CXX_11)
-		message(STATUS "Using C++11 for the application build")
-		set(CMAKE_CXX_STANDARD 11)
-		set(REQUIRED_STD_CXX_FLAGS "-std=c++11")
-	else()
-		message(FATAL_ERROR "Need modern C++, at least language standard 11")
-	endif()
+	message(FATAL_ERROR "Need a C++17-capable compiler (required by Qt 6)")
 endif()
 
 list(APPEND PKGDEPS glib-2.0>=2.28.0 libzip>=0.11)
@@ -144,35 +109,21 @@ pkg_check_modules(PKGDEPS REQUIRED ${PKGDEPS})
 
 set(CMAKE_AUTOMOC TRUE)
 
-# Check for Qt5, and check for Qt6 if Qt5 is not found.
+# Require Qt 6 (>= 6.2).
 set(QT_COMPONENTS Core Gui LinguistTools Widgets Svg)
-find_package(Qt5 5.3 QUIET COMPONENTS Core)
-if(Qt5_FOUND)
-	find_package(Qt5 5.3 COMPONENTS ${QT_COMPONENTS} REQUIRED)
-	message(STATUS "Qt version: ${Qt5_VERSION}")
-else()
-	find_package(Qt6 6.2 COMPONENTS ${QT_COMPONENTS} REQUIRED)
-	message(STATUS "Qt version: ${Qt6_VERSION}")
-endif()
+find_package(Qt6 6.2 COMPONENTS ${QT_COMPONENTS} REQUIRED)
+message(STATUS "Qt version: ${Qt6_VERSION}")
 
 if(WIN32)
-	# MXE workaround: Use pkg-config to find Qt5 and Qt6 libs.
+	# MXE workaround: Use pkg-config to find Qt6 libs.
 	# https://github.com/mxe/mxe/issues/1642
 	# Not required (and doesn't work) on MSYS2.
 	if(NOT DEFINED ENV{MSYSTEM})
-		if(Qt5_FOUND)
-			pkg_check_modules(QT5ALL REQUIRED Qt5Widgets>=5.3 Qt5Gui>=5.3 Qt5Svg>=5.3)
-		else()
-			pkg_check_modules(QT6ALL REQUIRED Qt6Widgets>=6.2 Qt6Gui>=6.2 Qt6Svg>=6.2)
-		endif()
+		pkg_check_modules(QT6ALL REQUIRED Qt6Widgets>=6.2 Qt6Gui>=6.2 Qt6Svg>=6.2)
 	endif()
 endif()
 
-if(Qt5_FOUND)
-	set(QT_LIBRARIES Qt5::Gui Qt5::Widgets Qt5::Svg)
-else()
-	set(QT_LIBRARIES Qt6::Gui Qt6::Widgets Qt6::Svg)
-endif()
+set(QT_LIBRARIES Qt6::Gui Qt6::Widgets Qt6::Svg)
 
 set(BOOSTCOMPS filesystem serialization)
 if(ENABLE_TESTS)
@@ -556,11 +507,7 @@ if(WIN32)
 	list(APPEND pulseview_SOURCES pulseviewico.rc)
 endif()
 
-if(Qt5_FOUND)
-	qt5_add_resources(pulseview_RESOURCES_RCC ${pulseview_RESOURCES})
-else()
-	qt6_add_resources(pulseview_RESOURCES_RCC ${pulseview_RESOURCES})
-endif()
+qt6_add_resources(pulseview_RESOURCES_RCC ${pulseview_RESOURCES})
 
 #===============================================================================
 #= Translations
@@ -572,19 +519,11 @@ if (NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
 	configure_file("translations.qrc" "translations.qrc" COPYONLY)
 endif ()
 
-if(Qt5_FOUND)
-	qt5_add_translation(QM_FILES ${TS_FILES})
-	qt5_add_resources(pulseview_RESOURCES_RCC ${CMAKE_BINARY_DIR}/translations.qrc)
-	if (ENABLE_TS_UPDATE)
-		qt5_create_translation(QM_FILES ${pulseview_SOURCES} ${TS_FILES})
-	endif ()
-else()
-	qt6_add_translation(QM_FILES ${TS_FILES})
-	qt6_add_resources(pulseview_RESOURCES_RCC ${CMAKE_BINARY_DIR}/translations.qrc)
-	if (ENABLE_TS_UPDATE)
-		qt6_create_translation(QM_FILES ${pulseview_SOURCES} ${TS_FILES})
-	endif ()
-endif()
+qt6_add_translation(QM_FILES ${TS_FILES})
+qt6_add_resources(pulseview_RESOURCES_RCC ${CMAKE_BINARY_DIR}/translations.qrc)
+if (ENABLE_TS_UPDATE)
+	qt6_create_translation(QM_FILES ${pulseview_SOURCES} ${TS_FILES})
+endif ()
 
 #===============================================================================
 #= Global Definitions
@@ -660,29 +599,15 @@ else()
 	list(APPEND PULSEVIEW_LINK_LIBS ${PKGDEPS_LIBRARIES})
 endif()
 
-if(Qt5_FOUND)
-	get_target_property(QT_CORE_LIBRARY_TYPE Qt5::Core TYPE)
-else()
-	get_target_property(QT_CORE_LIBRARY_TYPE Qt6::Core TYPE)
-endif()
+get_target_property(QT_CORE_LIBRARY_TYPE Qt6::Core TYPE)
 if(WIN32 AND QT_CORE_LIBRARY_TYPE STREQUAL "STATIC_LIBRARY")
 	# On Windows we need to statically link the libqsvg imageformat
 	# plugin (and the QtSvg component) for SVG graphics/icons to work.
-	# We also need QWindowsIntegrationPlugin, Qt5PlatformSupport (only for
-	# Qt < 5.8.0), and all Qt libs and their dependencies.
+	# We also need QWindowsIntegrationPlugin and all Qt libs and their dependencies.
 	add_definitions(-DQT_STATICPLUGIN)
-	if(Qt5_FOUND)
-		list(APPEND PULSEVIEW_LINK_LIBS Qt5::QSvgPlugin)
-		list(APPEND PULSEVIEW_LINK_LIBS Qt5::QWindowsIntegrationPlugin)
-		if(Qt5Gui_VERSION VERSION_LESS 5.8.0)
-			list(APPEND PULSEVIEW_LINK_LIBS -lQt5PlatformSupport)
-		endif()
-		list(APPEND PULSEVIEW_LINK_LIBS ${QT5ALL_LDFLAGS})
-	else()
-		list(APPEND PULSEVIEW_LINK_LIBS Qt6::QSvgPlugin)
-		list(APPEND PULSEVIEW_LINK_LIBS Qt6::QWindowsIntegrationPlugin)
-		list(APPEND PULSEVIEW_LINK_LIBS ${QT6ALL_LDFLAGS})
-	endif()
+	list(APPEND PULSEVIEW_LINK_LIBS Qt6::QSvgPlugin)
+	list(APPEND PULSEVIEW_LINK_LIBS Qt6::QWindowsIntegrationPlugin)
+	list(APPEND PULSEVIEW_LINK_LIBS ${QT6ALL_LDFLAGS})
 endif()
 
 if(ENABLE_STACKTRACE)
