@@ -1116,19 +1116,12 @@ void AnalogSignal::on_conv_threshold_changed(int index)
 		QString re1 = "([+-]?\\d*[\\.,]?\\d*)"; // Float value
 		QString re2 = "([a-zA-Z]*)"; // SI unit
 		const QString text = conv_threshold_cb_->currentText();
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 		QRegularExpression regex(re1 + re2);
-		if (!regex.match(text).hasMatch())
+		const QRegularExpressionMatch match = regex.match(text);
+		if (!match.hasMatch())
 			return;  // String doesn't match the regex
 
-		QStringList tokens = regex.match(text).capturedTexts();
-#else
-		QRegExp regex(re1 + re2);
-		if (!regex.exactMatch(text))
-			return;  // String doesn't match the regex
-
-		QStringList tokens = regex.capturedTexts();
-#endif
+		QStringList tokens = match.capturedTexts();
 
 		// For now, we simply assume that the unit is volt without modifiers
 		const double thr = tokens.at(1).toDouble();
@@ -1150,21 +1143,13 @@ void AnalogSignal::on_conv_threshold_changed(int index)
 		QString re4 = "([+-]?\\d*[\\.,]?\\d*)"; // Float value
 		QString re5 = "([a-zA-Z]*)"; // SI unit
 		const QString text = conv_threshold_cb_->currentText();
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 		QRegularExpression regex(re1 + re2 + re3 + re4 + re5);
+		const QRegularExpressionMatch match = regex.match(text);
 
-		if (!regex.match(text).hasMatch())
+		if (!match.hasMatch())
 			return;  // String doesn't match the regex
 
-		QStringList tokens = regex.match(text).capturedTexts();
-#else
-		QRegExp regex(re1 + re2 + re3 + re4 + re5);
-
-		if (!regex.exactMatch(text))
-			return;  // String doesn't match the regex
-
-		QStringList tokens = regex.capturedTexts();
-#endif
+		QStringList tokens = match.capturedTexts();
 
 		// For now, we simply assume that the unit is volt without modifiers
 		const double low_thr = tokens.at(1).toDouble();

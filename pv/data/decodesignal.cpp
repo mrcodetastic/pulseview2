@@ -24,9 +24,7 @@
 #include <limits>
 
 #include <QDebug>
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QRegularExpression>
-#endif
 
 #include "logic.hpp"
 #include "logicsegment.hpp"
@@ -313,11 +311,7 @@ void DecodeSignal::auto_assign_signals(const shared_ptr<Decoder> dec)
 	disconnect_input_notifiers();
 
 	// Try to auto-select channels that don't have signals assigned yet
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 	static const QRegularExpression separator_re("[-_.]");
-#else
-	static const QRegExp separator_re("[-_.]");
-#endif
 	for (decode::DecodeChannel& ch : channels_) {
 		// If a decoder is given, auto-assign only its channels
 		if (dec && (ch.decoder_ != dec))
@@ -773,11 +767,7 @@ void DecodeSignal::save_settings(QSettings &settings) const
 	for (const shared_ptr<Decoder>& decoder : stack_) {
 		settings.beginGroup("decoder" + QString::number(decoder_idx++));
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 		settings.setValue("id", (const char *)decoder->get_srd_decoder()->id);
-#else
-		settings.setValue("id", decoder->get_srd_decoder()->id);
-#endif
 		settings.setValue("visible", decoder->visible());
 
 		// Save decoder options
