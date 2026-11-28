@@ -118,6 +118,7 @@ private:
 
 	QPoint hover_pos_;
 	bool hover_active_;
+	bool hover_measurements_enabled_;
 };
 
 } // namespace trace

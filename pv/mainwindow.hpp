@@ -221,6 +221,7 @@ private:
 	QAction *menu_action_decrease_height_;
 	QAction *menu_action_reset_height_;
 	QAction *menu_action_show_cursors_;
+	QAction *menu_action_hover_measurements_;
 	QAction *menu_action_compress_idle_;
 	QAction *menu_action_sticky_scrolling_;
 	QAction *menu_action_sampling_points_;

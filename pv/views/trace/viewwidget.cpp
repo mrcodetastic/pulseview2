@@ -207,6 +207,7 @@ void ViewWidget::mouse_left_release_event(QMouseEvent *event)
 
 	for (auto &i : items)
 		i->drag_release();
+	drag_release();
 
 	if (item_dragging_)
 		view_.restack_all_trace_tree_items();

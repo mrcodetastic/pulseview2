@@ -65,6 +65,7 @@ Viewport::Viewport(View &parent) :
 	// Set up settings and event handlers
 	GlobalSettings settings;
 	allow_vertical_dragging_ = settings.value(GlobalSettings::Key_View_AllowVerticalDragging).toBool();
+	hover_measurements_enabled_ = settings.value(GlobalSettings::Key_View_HoverMeasurements, true).toBool();
 
 	GlobalSettings::add_change_handler(this);
 }
@@ -231,7 +232,7 @@ void Viewport::paintEvent(QPaintEvent*)
 			p.drawLine(QPointF(x2, 0), QPointF(x2, height()));
 		}
 	}
-	if (hover_active_ && drag_offset_ == boost::none)
+	if (hover_measurements_enabled_ && hover_active_ && drag_offset_ == boost::none)
 		paint_hover_measurement(p);
 
 	p.end();
@@ -499,6 +500,10 @@ void Viewport::on_setting_changed(const QString &key, const QVariant &value)
 {
 	if (key == GlobalSettings::Key_View_AllowVerticalDragging)
 		allow_vertical_dragging_ = value.toBool();
+	else if (key == GlobalSettings::Key_View_HoverMeasurements) {
+		hover_measurements_enabled_ = value.toBool();
+		update();
+	}
 }
 
 } // namespace trace

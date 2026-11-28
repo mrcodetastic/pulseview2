@@ -129,6 +129,7 @@ MainWindow::MainWindow(DeviceManager &device_manager, QWidget *parent) :
 	menu_action_decrease_height_(nullptr),
 	menu_action_reset_height_(nullptr),
 	menu_action_show_cursors_(nullptr),
+	menu_action_hover_measurements_(nullptr),
 	menu_action_compress_idle_(nullptr),
 	menu_action_sticky_scrolling_(nullptr),
 	menu_action_sampling_points_(nullptr),
@@ -919,6 +920,14 @@ void MainWindow::setup_menu_bar()
 			mb->action_view_show_cursors()->trigger();
 	});
 
+	menu_action_hover_measurements_ = view_menu->addAction(tr("Hover &Measurements"));
+	menu_action_hover_measurements_->setCheckable(true);
+	menu_action_hover_measurements_->setStatusTip(tr("Show live frequency, period, pulse width, and duty cycle when hovering over logic pulses"));
+	connect(menu_action_hover_measurements_, &QAction::triggered, this, [](bool checked) {
+		GlobalSettings settings;
+		settings.setValue(GlobalSettings::Key_View_HoverMeasurements, checked);
+	});
+
 	menu_action_compress_idle_ = view_menu->addAction(tr("Compress &Idle Intervals"));
 	menu_action_compress_idle_->setCheckable(true);
 	connect(menu_action_compress_idle_, &QAction::triggered, this, [this](bool checked) {
@@ -1149,6 +1158,11 @@ void MainWindow::update_menu_state()
 	}
 
 	GlobalSettings settings;
+	if (menu_action_hover_measurements_) {
+		const QSignalBlocker b(menu_action_hover_measurements_);
+		menu_action_hover_measurements_->setChecked(
+			settings.value(GlobalSettings::Key_View_HoverMeasurements, true).toBool());
+	}
 	if (menu_action_sticky_scrolling_) {
 		const QSignalBlocker b(menu_action_sticky_scrolling_);
 		menu_action_sticky_scrolling_->setChecked(
