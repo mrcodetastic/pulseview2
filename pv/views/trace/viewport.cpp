@@ -281,9 +281,9 @@ void Viewport::paint_hover_measurement(QPainter &p)
 	int row_top = 0, row_bottom = 0;
 
 	for (const shared_ptr<LogicSignal> &sig : view_.list_by_type<LogicSignal>()) {
-		if (!sig || !sig->enabled())
+		if (!sig || !sig->base() || !sig->base()->enabled())
 			continue;
-		const int y = sig->visual_v_offset();
+		const int y = sig->get_visual_y();
 		const auto ext = sig->v_extents();
 		const int top = y + ext.first;
 		const int bot = y + ext.second;
@@ -345,13 +345,14 @@ void Viewport::paint_hover_measurement(QPainter &p)
 	double freq_hz = 0.0;
 	double duty_pct = 0.0;
 
-	if (static_cast<uint64_t>(t1) + 1 < sample_count) {
+	const uint64_t next_start = static_cast<uint64_t>(t1);
+	if (next_start + 1 < sample_count) {
+		const uint64_t next_end = min(sample_count, next_start + search_radius);
 		vector<pv::data::LogicSegment::EdgePair> next_edges;
-		segment->get_surrounding_edges(next_edges,
-			static_cast<uint64_t>(t1) + 1, 1.0f, sig_index, search_radius);
-		if (next_edges.size() >= 2 && next_edges[1].first > t1 &&
-			next_edges[1].second == level_high) {
-			t2 = next_edges[1].first;
+		segment->get_subsampled_edges(next_edges, next_start, next_end, 1.0f, sig_index, true);
+		if (!next_edges.empty() && next_edges.front().first > t1 &&
+			next_edges.front().second == level_high) {
+			t2 = next_edges.front().first;
 			const uint64_t period_samples = static_cast<uint64_t>(t2 - t0);
 			const uint64_t high_samples = level_high ?
 				pulse_samples : static_cast<uint64_t>(t2 - t1);
