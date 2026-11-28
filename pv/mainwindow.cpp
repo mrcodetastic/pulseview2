@@ -1638,11 +1638,19 @@ void MainWindow::on_tab_close_requested(int index)
 
 	if (session->data_saved() || (QMessageBox::question(this, tr("Confirmation"),
 		tr("This session contains unsaved data. Close it anyway?"),
-		QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes))
+		QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes)) {
+		shared_ptr<devices::HardwareDevice> prior_device;
+		if (sessions_.size() == 1 && !session->device_needs_reconnect())
+			prior_device = dynamic_pointer_cast<devices::HardwareDevice>(session->device());
+
 		remove_session(session);
 
-	if (sessions_.empty())
-		update_acq_button(nullptr);
+		if (sessions_.empty()) {
+			shared_ptr<Session> replacement = add_session();
+			if (prior_device)
+				replacement->select_device(prior_device);
+		}
+	}
 }
 
 void MainWindow::on_show_decoder_selector(Session *session)
