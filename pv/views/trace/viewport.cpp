@@ -390,13 +390,51 @@ void Viewport::paint_hover_measurement(QPainter &p)
 	if (has_period) {
 		const pv::util::Timestamp ts2 = segment->start_time() + pv::util::Timestamp(t2) / samplerate;
 		const double x2 = view_.time_to_pixel(ts2);
-		p.setPen(QPen(QColor(22, 163, 74, 180), 1.0, Qt::DashLine));
-		if (x2 >= 0 && x2 <= width())
-			p.drawLine(QPointF(x2, row_top), QPointF(x2, row_bottom));
 		const double bx0 = max(0.0, min(static_cast<double>(width()), x0));
 		const double bx2 = max(0.0, min(static_cast<double>(width()), x2));
-		if (bx2 > bx0)
-			p.drawLine(QPointF(bx0, row_top + 2), QPointF(bx2, row_top + 2));
+
+		// Subtle green tint over the second half-cycle (x1 -> x2) to complete the full period
+		if (bx2 > hl_x1) {
+			p.fillRect(QRectF(hl_x1, row_top, bx2 - hl_x1, row_bottom - row_top),
+				QColor(22, 163, 74, 24));
+		}
+
+		// Bold dashed vertical line at the end of the full period (x2)
+		const QColor period_col(5, 150, 105, 235);
+		p.setPen(QPen(period_col, 2.0, Qt::DashLine));
+		if (x2 >= 0 && x2 <= width())
+			p.drawLine(QPointF(x2, row_top), QPointF(x2, row_bottom));
+
+		// Clear horizontal period bracket (x0 <-> x2) with end ticks and 'T' pill
+		if (bx2 > bx0 + 6.0) {
+			const double bracket_y = row_top + 6.0;
+			p.setPen(QPen(period_col, 2.0, Qt::DashLine));
+			p.drawLine(QPointF(bx0, bracket_y), QPointF(bx2, bracket_y));
+
+			p.setPen(QPen(period_col, 2.0, Qt::SolidLine));
+			if (x0 >= 0 && x0 <= width())
+				p.drawLine(QPointF(x0, bracket_y - 4.0), QPointF(x0, bracket_y + 4.0));
+			if (x2 >= 0 && x2 <= width())
+				p.drawLine(QPointF(x2, bracket_y - 4.0), QPointF(x2, bracket_y + 4.0));
+
+			if (bx2 - bx0 >= 28.0) {
+				QFont tag_font = p.font();
+				tag_font.setBold(true);
+				tag_font.setPointSizeF(max(7.0, tag_font.pointSizeF() - 1.0));
+				const QFontMetrics fm_tag(tag_font);
+				const QString tag = QStringLiteral("T");
+				const int tw = fm_tag.horizontalAdvance(tag) + 8;
+				const int th = fm_tag.height() + 2;
+				const double mx = 0.5 * (bx0 + bx2);
+				const QRectF tag_rect(mx - tw * 0.5, bracket_y - th * 0.5, tw, th);
+				p.setPen(QPen(period_col, 1.0));
+				p.setBrush(QColor(236, 253, 245, 235));
+				p.drawRoundedRect(tag_rect, 3.0, 3.0);
+				p.setFont(tag_font);
+				p.setPen(QColor(6, 95, 70));
+				p.drawText(tag_rect, Qt::AlignCenter, tag);
+			}
+		}
 	}
 
 	// Build HUD text
