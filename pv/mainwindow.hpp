@@ -156,6 +156,8 @@ private Q_SLOTS:
 
 	void on_tab_changed(int index);
 	void on_tab_close_requested(int index);
+	void on_tab_double_clicked(int index);
+	void on_tab_context_menu(const QPoint &pos);
 
 	void on_show_decoder_selector(Session *session);
 	void on_sub_window_close_clicked();
@@ -173,6 +175,8 @@ private Q_SLOTS:
 
 private:
 	void save_workspace_dialog(bool full_workspace);
+	void rename_session_tab(int index);
+	void update_tab_badge(Session *session);
 
 	DeviceManager &device_manager_;
 

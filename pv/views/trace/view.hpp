@@ -535,6 +535,7 @@ private:
 	Ruler *ruler_;
 	Header *header_;
 	QSplitter *splitter_;
+	class OverviewMinimap *minimap_;
 
 	QShortcut *zoom_in_shortcut_, *zoom_in_shortcut_2_;
 	QShortcut *zoom_out_shortcut_, *zoom_out_shortcut_2_;

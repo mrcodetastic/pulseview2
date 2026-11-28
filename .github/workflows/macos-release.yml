@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag name (e.g. v1.1.0)'
+        description: 'Release tag name (e.g. v1.2.0)'
         required: true
-        default: 'v1.1.0'
+        default: 'v1.2.0'
       prerelease:
         description: 'Mark GitHub Release as pre-release'
         type: boolean

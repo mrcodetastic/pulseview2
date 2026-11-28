@@ -51,8 +51,12 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QLineEdit>
+#include <QPainter>
+#include <QPixmap>
 #include <QStyle>
+#include <QTabBar>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QToolButton>
@@ -502,6 +506,7 @@ shared_ptr<Session> MainWindow::add_session()
 	window->setDockNestingEnabled(true);
 
 	add_view(views::ViewTypeTrace, *session);
+	update_tab_badge(session.get());
 	update_acq_button(session.get());
 
 	return session;
@@ -639,6 +644,11 @@ void MainWindow::setup_ui()
 		this, SLOT(on_tab_close_requested(int)));
 	connect(&session_selector_, SIGNAL(currentChanged(int)),
 		this, SLOT(on_tab_changed(int)));
+	connect(&session_selector_, SIGNAL(tabBarDoubleClicked(int)),
+		this, SLOT(on_tab_double_clicked(int)));
+	session_selector_.tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
+	connect(session_selector_.tabBar(), SIGNAL(customContextMenuRequested(const QPoint&)),
+		this, SLOT(on_tab_context_menu(const QPoint&)));
 
 	connect(static_cast<QApplication *>(QCoreApplication::instance()),
 		SIGNAL(focusChanged(QWidget*, QWidget*)),
@@ -823,6 +833,16 @@ void MainWindow::setup_menu_bar()
 				on_new_view(s.get(), i);
 		});
 	}
+#ifdef ENABLE_DECODE
+	QAction *const act_decoder_table = view_menu->addAction(
+		QIcon(":/icons/add-decoder.svg"), tr("Protocol &Decoder Table"));
+	act_decoder_table->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
+	act_decoder_table->setStatusTip(tr("Open a searchable protocol decoder table synced with the waveform"));
+	connect(act_decoder_table, &QAction::triggered, this, [this] {
+		if (auto s = active_session())
+			on_new_view(s.get(), views::ViewTypeTabularDecoder);
+	});
+#endif
 
 	view_menu->addSeparator();
 
@@ -1506,12 +1526,16 @@ void MainWindow::on_session_name_changed()
 	// Refresh window title if the affected session has focus
 	if (session == last_focused_session_.get())
 		setWindowTitle(session->name() + " - " + WindowTitle);
+
+	update_tab_badge(session);
 }
 
 void MainWindow::on_session_device_changed()
 {
 	Session *session = qobject_cast<Session*>(QObject::sender());
 	assert(session);
+
+	update_tab_badge(session);
 
 	// Ignore if caller is not the currently focused session
 	// unless there is only one session
@@ -1528,13 +1552,18 @@ void MainWindow::on_session_capture_state_changed(int state)
 	Session *session = qobject_cast<Session*>(QObject::sender());
 	assert(session);
 
+	update_tab_badge(session);
+
 	// Refresh any other sessions sharing the same device so their Run/Busy
-	// button and hardware controls reflect device availability immediately.
+	// button, tab badge, and hardware controls reflect device availability immediately.
 	const shared_ptr<devices::Device> dev = session->device();
 	if (dev) {
 		for (const shared_ptr<Session> &s : sessions_) {
-			if (s.get() != session && s->device() == dev && s->main_bar())
-				s->main_bar()->set_capture_state(s->get_capture_state());
+			if (s.get() != session && s->device() == dev) {
+				if (s->main_bar())
+					s->main_bar()->set_capture_state(s->get_capture_state());
+				update_tab_badge(s.get());
+			}
 		}
 	}
 
@@ -1922,7 +1951,7 @@ void MainWindow::on_open_workspace()
 			session->load_file(sdata.capture_file_path);
 			workspace::apply_session_setup(*session, sdata.setup);
 			if (!sdata.name.isEmpty())
-				session->set_name(sdata.name);
+				session->set_custom_name(sdata.name);
 		} else {
 			if (sdata.device_type == "hardware") {
 				map<string, string> dev_info;
@@ -1941,8 +1970,9 @@ void MainWindow::on_open_workspace()
 			}
 			workspace::apply_session_setup(*session, sdata.setup);
 			if (!sdata.name.isEmpty())
-				session->set_name(sdata.name);
+				session->set_custom_name(sdata.name);
 		}
+		update_tab_badge(session.get());
 	}
 
 	if (!created.empty()) {
@@ -1956,6 +1986,107 @@ void MainWindow::on_open_workspace()
 	}
 
 	statusBar()->showMessage(tr("Opened workspace %1").arg(QFileInfo(file_path).fileName()), 5000);
+}
+
+void MainWindow::on_tab_double_clicked(int index)
+{
+	rename_session_tab(index);
+}
+
+void MainWindow::on_tab_context_menu(const QPoint &pos)
+{
+	const int index = session_selector_.tabBar()->tabAt(pos);
+	if (index < 0)
+		return;
+
+	QMenu menu(this);
+	QAction *rename_act = menu.addAction(tr("&Rename Capture Session..."));
+	QAction *close_act = menu.addAction(tr("&Close Capture Session"));
+
+	QAction *chosen = menu.exec(session_selector_.tabBar()->mapToGlobal(pos));
+	if (chosen == rename_act)
+		rename_session_tab(index);
+	else if (chosen == close_act)
+		on_tab_close_requested(index);
+}
+
+void MainWindow::rename_session_tab(int index)
+{
+	shared_ptr<Session> session = get_tab_session(index);
+	if (!session)
+		return;
+
+	bool ok = false;
+	const QString new_name = QInputDialog::getText(
+		this, tr("Rename Capture Session"),
+		tr("Session name:"), QLineEdit::Normal,
+		session->name(), &ok);
+	if (ok && !new_name.trimmed().isEmpty())
+		session->set_custom_name(new_name.trimmed());
+}
+
+void MainWindow::update_tab_badge(Session *session)
+{
+	if (!session)
+		return;
+
+	int tab_idx = -1;
+	for (const auto &entry : session_windows_) {
+		if (entry.first.get() == session) {
+			tab_idx = session_selector_.indexOf(entry.second);
+			break;
+		}
+	}
+	if (tab_idx < 0)
+		return;
+
+	QColor dot_color("#9ca3af"); // No device (neutral gray)
+	QString state_text = tr("No device");
+
+	const shared_ptr<devices::Device> dev = session->device();
+	const QString dev_name = dev ?
+		QString::fromStdString(dev->display_name(device_manager_)) : QString();
+
+	if (session->get_capture_state() == Session::Running) {
+		dot_color = QColor("#16a34a"); // Green: capturing
+		state_text = tr("Capturing");
+	} else if (session->get_capture_state() == Session::AwaitingTrigger) {
+		dot_color = QColor("#d97706"); // Amber: awaiting trigger
+		state_text = tr("Waiting for trigger");
+	} else if (session->device_needs_reconnect()) {
+		dot_color = QColor("#dc2626"); // Red: disconnected
+		state_text = tr("Disconnected");
+	} else if (dev && dev->is_busy_for(session)) {
+		dot_color = QColor("#d97706"); // Amber: shared device busy
+		Session *owner = dev->capture_owner();
+		state_text = owner ?
+			tr("Device busy in %1").arg(owner->name()) :
+			tr("Device busy");
+	} else if (session->using_file_device()) {
+		dot_color = QColor("#2563eb"); // Blue: file capture
+		state_text = tr("Loaded capture file");
+	} else if (dev && dev->device()) {
+		dot_color = QColor("#0ea5e9"); // Cyan: hardware ready
+		state_text = tr("Ready");
+	}
+
+	QPixmap pm(12, 12);
+	pm.fill(Qt::transparent);
+	QPainter p(&pm);
+	p.setRenderHint(QPainter::Antialiasing, true);
+	p.setPen(QPen(dot_color.darker(125), 1.0));
+	p.setBrush(dot_color);
+	p.drawEllipse(QRectF(2.0, 2.0, 8.0, 8.0));
+	p.end();
+
+	session_selector_.setTabIcon(tab_idx, QIcon(pm));
+
+	QString tip = session->name();
+	if (!dev_name.isEmpty())
+		tip += QString(" — %1").arg(dev_name);
+	tip += QString(" (%1)").arg(state_text);
+	tip += "\n" + tr("Double-click or right-click tab to rename");
+	session_selector_.setTabToolTip(tab_idx, tip);
 }
 
 } // namespace pv

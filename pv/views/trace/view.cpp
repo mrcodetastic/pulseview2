@@ -60,6 +60,7 @@
 #include "pv/views/trace/signal.hpp"
 #include "pv/views/trace/tracegroup.hpp"
 #include "pv/views/trace/triggermarker.hpp"
+#include "pv/views/trace/overviewminimap.hpp"
 #include "pv/views/trace/viewport.hpp"
 
 #ifdef ENABLE_DECODE
@@ -136,7 +137,18 @@ View::View(Session &session, bool is_main_view, QMainWindow *parent) :
 {
 	QVBoxLayout *root_layout = new QVBoxLayout(this);
 	root_layout->setContentsMargins(0, 0, 0, 0);
-	root_layout->addWidget(splitter_);
+	root_layout->setSpacing(0);
+	root_layout->addWidget(splitter_, 1);
+
+	minimap_ = new OverviewMinimap(*this, this);
+	root_layout->addWidget(minimap_, 0);
+
+	connect(this, &View::scale_changed, minimap_, QOverload<>::of(&QWidget::update));
+	connect(this, &View::offset_changed, minimap_, QOverload<>::of(&QWidget::update));
+	connect(&session_, &Session::data_received, minimap_, QOverload<>::of(&QWidget::update));
+	connect(&session_, &Session::capture_state_changed, minimap_, QOverload<>::of(&QWidget::update));
+	connect(&session_, &Session::signals_changed, minimap_, QOverload<>::of(&QWidget::update));
+	connect(&session_, &Session::segment_completed, minimap_, QOverload<>::of(&QWidget::update));
 
 	viewport_ = new Viewport(*this);
 	scrollarea_ = new CustomScrollArea(splitter_);

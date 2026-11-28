@@ -265,7 +265,7 @@ memaccess_check_unaligned_le(HAVE_UNALIGNED_LITTLE_ENDIAN_ACCESS)
 #-------------------------------------------------------------------------------
 
 set(PV_TITLE PulseView)
-set(PV_VERSION_STRING "1.1.0")
+set(PV_VERSION_STRING "1.2.0")
 
 if(GLIBMM_2_4_FOUND)
 	set(PV_GLIBMM_VERSION ${PKGDEPS_glibmm-2.4_VERSION})
@@ -378,6 +378,7 @@ set(pulseview_SOURCES
 	pv/views/trace/viewitem.cpp
 	pv/views/trace/viewitemowner.cpp
 	pv/views/trace/viewitempaintparams.cpp
+	pv/views/trace/overviewminimap.cpp
 	pv/views/trace/viewport.cpp
 	pv/views/trace/viewwidget.cpp
 	pv/views/viewbase.cpp
@@ -443,6 +444,7 @@ set(pulseview_HEADERS
 	pv/views/trace/triggermarker.hpp
 	pv/views/trace/view.hpp
 	pv/views/trace/viewitem.hpp
+	pv/views/trace/overviewminimap.hpp
 	pv/views/trace/viewport.hpp
 	pv/views/trace/viewwidget.hpp
 	pv/views/viewbase.hpp

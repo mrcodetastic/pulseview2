@@ -86,6 +86,7 @@ set(pulseview_TEST_SOURCES
 	${PROJECT_SOURCE_DIR}/pv/views/trace/viewitem.cpp
 	${PROJECT_SOURCE_DIR}/pv/views/trace/viewitemowner.cpp
 	${PROJECT_SOURCE_DIR}/pv/views/trace/viewitempaintparams.cpp
+	${PROJECT_SOURCE_DIR}/pv/views/trace/overviewminimap.cpp
 	${PROJECT_SOURCE_DIR}/pv/views/trace/viewport.cpp
 	${PROJECT_SOURCE_DIR}/pv/views/trace/viewwidget.cpp
 	${PROJECT_SOURCE_DIR}/pv/views/viewbase.cpp
@@ -165,6 +166,7 @@ set(pulseview_TEST_HEADERS
 	${PROJECT_SOURCE_DIR}/pv/views/trace/triggermarker.hpp
 	${PROJECT_SOURCE_DIR}/pv/views/trace/view.hpp
 	${PROJECT_SOURCE_DIR}/pv/views/trace/viewitem.hpp
+	${PROJECT_SOURCE_DIR}/pv/views/trace/overviewminimap.hpp
 	${PROJECT_SOURCE_DIR}/pv/views/trace/viewport.hpp
 	${PROJECT_SOURCE_DIR}/pv/views/trace/viewwidget.hpp
 	${PROJECT_SOURCE_DIR}/pv/views/viewbase.hpp

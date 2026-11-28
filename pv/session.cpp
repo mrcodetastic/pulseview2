@@ -225,6 +225,15 @@ void Session::set_name(QString name)
 	name_changed();
 }
 
+void Session::set_custom_name(QString name)
+{
+	const QString trimmed = name.trimmed();
+	if (trimmed.isEmpty())
+		return;
+	custom_name_ = true;
+	set_name(trimmed);
+}
+
 QString Session::save_path() const
 {
 	return save_path_;
@@ -680,10 +689,12 @@ void Session::set_device(shared_ptr<devices::Device> device)
 
 	device_.reset();
 
-	// Revert name back to default name (e.g. "Session 1") as the data is gone
-	name_ = default_name_;
+	// Revert name back to default name (e.g. "Session 1") unless user renamed the tab
+	if (!custom_name_) {
+		name_ = default_name_;
+		name_changed();
+	}
 	save_path_.clear();
-	name_changed();
 
 	// Remove all stored data and reset all views
 	for (shared_ptr<views::ViewBase> view : views_) {
@@ -1292,9 +1303,11 @@ void Session::start_capture(function<void (const QString)> error_handler)
 		dynamic_pointer_cast< devices::HardwareDevice >(device_);
 
 	if (hw_device) {
-		name_ = default_name_;
+		if (!custom_name_) {
+			name_ = default_name_;
+			name_changed();
+		}
 		save_path_.clear();
-		name_changed();
 	}
 }
 

@@ -101,6 +101,10 @@ private:
 
 	void wheelEvent(QWheelEvent *event);
 
+	void leaveEvent(QEvent *event);
+
+	void paint_hover_measurement(QPainter &p);
+
 	void on_setting_changed(const QString &key, const QVariant &value);
 
 private:
@@ -111,6 +115,9 @@ private:
 	pv::util::Timestamp pinch_offset0_;
 	pv::util::Timestamp pinch_offset1_;
 	bool pinch_zoom_active_;
+
+	QPoint hover_pos_;
+	bool hover_active_;
 };
 
 } // namespace trace

@@ -100,6 +100,20 @@ bool CustomFilterProxyModel::filterAcceptsRow(int sourceRow,
 		result = !entirely_outside_of_range;
 	}
 
+	if (result && !search_text_.isEmpty()) {
+		bool matched = false;
+		const int cols = sourceModel()->columnCount();
+		for (int c = 0; c < cols; ++c) {
+			const QString cell = sourceModel()->data(
+				sourceModel()->index(sourceRow, c), Qt::DisplayRole).toString();
+			if (cell.contains(search_text_, Qt::CaseInsensitive)) {
+				matched = true;
+				break;
+			}
+		}
+		result = matched;
+	}
+
 	return result;
 }
 
@@ -116,6 +130,15 @@ void CustomFilterProxyModel::enable_range_filtering(bool value)
 {
 	range_filtering_enabled_ = value;
 
+	invalidateFilter();
+}
+
+void CustomFilterProxyModel::set_search_text(const QString &text)
+{
+	const QString trimmed = text.trimmed();
+	if (search_text_ == trimmed)
+		return;
+	search_text_ = trimmed;
 	invalidateFilter();
 }
 
@@ -156,6 +179,8 @@ View::View(Session &session, bool is_main_view, QMainWindow *parent) :
 	decoder_selector_(new QComboBox()),
 	hide_hidden_cb_(new QCheckBox()),
 	view_mode_selector_(new QComboBox()),
+	search_edit_(new QLineEdit()),
+	match_count_label_(new QLabel()),
 	save_button_(new QToolButton()),
 	save_action_(new QAction(this)),
 	table_view_(new CustomTableView()),
@@ -176,6 +201,13 @@ View::View(Session &session, bool is_main_view, QMainWindow *parent) :
 	toolbar->addWidget(new QLabel(tr("Decoder:")));
 	toolbar->addWidget(decoder_selector_);
 	toolbar->addSeparator();
+	search_edit_->setPlaceholderText(tr("Filter decoded data..."));
+	search_edit_->setClearButtonEnabled(true);
+	search_edit_->setMinimumWidth(160);
+	search_edit_->setMaximumWidth(260);
+	toolbar->addWidget(search_edit_);
+	toolbar->addWidget(match_count_label_);
+	toolbar->addSeparator();
 	toolbar->addWidget(save_button_);
 	toolbar->addSeparator();
 	toolbar->addWidget(view_mode_selector_);
@@ -188,6 +220,8 @@ View::View(Session &session, bool is_main_view, QMainWindow *parent) :
 		this, SLOT(on_view_mode_changed(int)));
 	connect(hide_hidden_cb_, SIGNAL(toggled(bool)),
 		this, SLOT(on_hide_hidden_changed(bool)));
+	connect(search_edit_, &QLineEdit::textChanged,
+		this, &View::on_search_text_changed);
 
 	// Configure widgets
 	decoder_selector_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
@@ -353,6 +387,7 @@ void View::reset_data()
 void View::update_data()
 {
 	model_->set_signal_and_segment(signal_, current_segment_);
+	update_match_count();
 }
 
 void View::save_data_as_csv(unsigned int save_type) const
@@ -603,12 +638,36 @@ void View::on_actionSave_triggered(QAction* action)
 	save_data_as_csv(save_type);
 }
 
+void View::update_match_count()
+{
+	const int total = model_->rowCount();
+	const int shown = filter_proxy_model_->rowCount();
+	if (search_edit_->text().trimmed().isEmpty())
+		match_count_label_->setText(total > 0 ? tr(" %1 rows").arg(total) : QString());
+	else
+		match_count_label_->setText(tr(" %1 / %2").arg(shown).arg(total));
+}
+
+void View::on_search_text_changed(const QString &text)
+{
+	filter_proxy_model_->set_search_text(text);
+	update_match_count();
+}
+
 void View::on_table_item_clicked(const QModelIndex& index)
 {
-	(void)index;
-
 	// Force repaint, otherwise the new selection isn't shown for some reason
 	table_view_->viewport()->update();
+
+	// Sync the main waveform view directly to the clicked annotation
+	if (index.isValid()) {
+		const QModelIndex src_idx = filter_proxy_model_->mapToSource(index);
+		const Annotation* ann = static_cast<const Annotation*>(src_idx.internalPointer());
+		if (ann) {
+			if (shared_ptr<views::ViewBase> main_view = session_.main_view())
+				main_view->focus_on_range(ann->start_sample(), ann->end_sample());
+		}
+	}
 }
 
 void View::on_table_item_double_clicked(const QModelIndex& index)

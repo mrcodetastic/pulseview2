@@ -206,12 +206,12 @@ A human-readable form has been saved to disk and was written to the log. You may
 <context>
     <name>pv</name>
     <message>
-        <location filename="../pv/session.cpp" line="1967"/>
+        <location filename="../pv/session.cpp" line="1980"/>
         <source>Out of memory, acquisition stopped.</source>
         <translation type="unfinished">メモリが不足しているため、取得が停止しました。</translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1972"/>
+        <location filename="../pv/session.cpp" line="1985"/>
         <source>Failed to stop acquisition after a capture error.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -219,824 +219,887 @@ A human-readable form has been saved to disk and was written to the log. You may
 <context>
     <name>pv::MainWindow</name>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="412"/>
+        <location filename="../pv/mainwindow.cpp" line="416"/>
         <source>Decoder Selector</source>
         <translation>デコーダー選択</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="465"/>
+        <location filename="../pv/mainwindow.cpp" line="469"/>
         <source>Session %1</source>
         <translation>セッション %1</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="96"/>
+        <location filename="../pv/mainwindow.cpp" line="100"/>
         <source>PulseView2</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="317"/>
-        <location filename="../pv/mainwindow.cpp" line="349"/>
+        <location filename="../pv/mainwindow.cpp" line="321"/>
+        <location filename="../pv/mainwindow.cpp" line="353"/>
         <source>Pop out view into its own window</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="348"/>
+        <location filename="../pv/mainwindow.cpp" line="352"/>
         <source>Dock view back into session tab</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="664"/>
+        <location filename="../pv/mainwindow.cpp" line="674"/>
         <source>&amp;File</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="667"/>
+        <location filename="../pv/mainwindow.cpp" line="677"/>
         <source>&amp;New Capture Session</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="669"/>
+        <location filename="../pv/mainwindow.cpp" line="679"/>
         <source>Open a new capture session tab</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="672"/>
+        <location filename="../pv/mainwindow.cpp" line="682"/>
+        <location filename="../pv/mainwindow.cpp" line="2004"/>
         <source>&amp;Close Capture Session</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="674"/>
+        <location filename="../pv/mainwindow.cpp" line="684"/>
         <source>Close the current capture session tab</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="680"/>
+        <location filename="../pv/mainwindow.cpp" line="690"/>
         <source>Open &amp;Workspace...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="682"/>
+        <location filename="../pv/mainwindow.cpp" line="692"/>
         <source>Open a PulseView2 workspace or session file (.pv2)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="686"/>
+        <location filename="../pv/mainwindow.cpp" line="696"/>
         <source>Save &amp;Workspace...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="688"/>
+        <location filename="../pv/mainwindow.cpp" line="698"/>
         <source>Save all open sessions to a PulseView2 workspace file (.pv2)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="692"/>
+        <location filename="../pv/mainwindow.cpp" line="702"/>
         <source>Save Current Workspace S&amp;ession...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="693"/>
+        <location filename="../pv/mainwindow.cpp" line="703"/>
         <source>Save the current session tab to a PulseView2 file (.pv2)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="699"/>
+        <location filename="../pv/mainwindow.cpp" line="709"/>
         <source>&amp;Open Capture Data...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="701"/>
+        <location filename="../pv/mainwindow.cpp" line="711"/>
         <source>Open a saved sigrok capture data file (.sr)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="708"/>
+        <location filename="../pv/mainwindow.cpp" line="718"/>
         <source>&amp;Save Capture Data...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="710"/>
+        <location filename="../pv/mainwindow.cpp" line="720"/>
         <source>Save the current capture data as a .sr file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="717"/>
+        <location filename="../pv/mainwindow.cpp" line="727"/>
         <source>Save Selected Capture &amp;Data...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="719"/>
+        <location filename="../pv/mainwindow.cpp" line="729"/>
         <source>Save only the capture data between measurement cursors</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="727"/>
+        <location filename="../pv/mainwindow.cpp" line="737"/>
         <source>&amp;Import</source>
         <translation type="unfinished">インポート(&amp;I)</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="739"/>
+        <location filename="../pv/mainwindow.cpp" line="749"/>
         <source>&amp;Export</source>
         <translation type="unfinished">エクスポート(&amp;E)</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="752"/>
+        <location filename="../pv/mainwindow.cpp" line="762"/>
         <source>&amp;Quit</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="755"/>
+        <location filename="../pv/mainwindow.cpp" line="765"/>
         <source>Exit PulseView2</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="759"/>
+        <location filename="../pv/mainwindow.cpp" line="769"/>
         <source>&amp;Capture</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="761"/>
-        <location filename="../pv/mainwindow.cpp" line="1044"/>
-        <location filename="../pv/mainwindow.cpp" line="1047"/>
+        <location filename="../pv/mainwindow.cpp" line="771"/>
+        <location filename="../pv/mainwindow.cpp" line="1064"/>
+        <location filename="../pv/mainwindow.cpp" line="1067"/>
         <source>&amp;Run</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="763"/>
+        <location filename="../pv/mainwindow.cpp" line="773"/>
         <source>Start or stop data capture</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="768"/>
+        <location filename="../pv/mainwindow.cpp" line="778"/>
         <source>&amp;Connect to Device...</source>
         <translation type="unfinished">デバイスへ接続(&amp;C)...</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="769"/>
+        <location filename="../pv/mainwindow.cpp" line="779"/>
         <source>Scan for and connect to a hardware analyzer or oscilloscope</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="775"/>
-        <location filename="../pv/mainwindow.cpp" line="1102"/>
+        <location filename="../pv/mainwindow.cpp" line="785"/>
+        <location filename="../pv/mainwindow.cpp" line="1122"/>
         <source>&amp;Reconnect Last Device</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="777"/>
+        <location filename="../pv/mainwindow.cpp" line="787"/>
         <source>Rescan and reconnect to the last used hardware device</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="783"/>
-        <location filename="../pv/mainwindow.cpp" line="1753"/>
+        <location filename="../pv/mainwindow.cpp" line="793"/>
+        <location filename="../pv/mainwindow.cpp" line="1782"/>
         <source>Reconnected to %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="790"/>
+        <location filename="../pv/mainwindow.cpp" line="800"/>
         <source>Device &amp;Configuration...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="791"/>
+        <location filename="../pv/mainwindow.cpp" line="801"/>
         <source>Configure hardware-specific device options</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="798"/>
+        <location filename="../pv/mainwindow.cpp" line="808"/>
         <source>C&amp;hannels...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="799"/>
+        <location filename="../pv/mainwindow.cpp" line="809"/>
         <source>Enable or disable individual channels</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="806"/>
+        <location filename="../pv/mainwindow.cpp" line="816"/>
         <source>&amp;Triggers...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="807"/>
+        <location filename="../pv/mainwindow.cpp" line="817"/>
         <source>Configure hardware trigger stages and conditions</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="814"/>
+        <location filename="../pv/mainwindow.cpp" line="824"/>
         <source>&amp;View</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="818"/>
+        <location filename="../pv/mainwindow.cpp" line="828"/>
         <source>New &amp;View</source>
         <translation type="unfinished">新しいビュー(&amp;V)</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="830"/>
+        <location filename="../pv/mainwindow.cpp" line="838"/>
+        <source>Protocol &amp;Decoder Table</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/mainwindow.cpp" line="840"/>
+        <source>Open a searchable protocol decoder table synced with the waveform</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/mainwindow.cpp" line="850"/>
         <source>Zoom &amp;In</source>
         <translation type="unfinished">ズームイン(&amp;I)</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="838"/>
+        <location filename="../pv/mainwindow.cpp" line="858"/>
         <source>Zoom &amp;Out</source>
         <translation type="unfinished">ズームアウト(&amp;O)</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="846"/>
+        <location filename="../pv/mainwindow.cpp" line="866"/>
         <source>Zoom to &amp;Fit</source>
         <translation type="unfinished">ウインドウに合わせる(&amp;F)</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="864"/>
+        <location filename="../pv/mainwindow.cpp" line="884"/>
         <source>Increase Channel &amp;Height</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="869"/>
+        <location filename="../pv/mainwindow.cpp" line="889"/>
         <source>Make signal channels taller for easier viewing</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="875"/>
+        <location filename="../pv/mainwindow.cpp" line="895"/>
         <source>Decrease Channel H&amp;eight</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="877"/>
+        <location filename="../pv/mainwindow.cpp" line="897"/>
         <source>Make signal channels shorter to fit more on screen</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="883"/>
+        <location filename="../pv/mainwindow.cpp" line="903"/>
         <source>Reset Channel Hei&amp;ght</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="885"/>
+        <location filename="../pv/mainwindow.cpp" line="905"/>
         <source>Restore default signal channel height</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="894"/>
+        <location filename="../pv/mainwindow.cpp" line="914"/>
         <source>Show &amp;Cursors</source>
         <translation type="unfinished">カーソル表示(&amp;C)</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="902"/>
+        <location filename="../pv/mainwindow.cpp" line="922"/>
         <source>Compress &amp;Idle Intervals</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="911"/>
+        <location filename="../pv/mainwindow.cpp" line="931"/>
         <source>&amp;Sticky Scrolling</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="914"/>
+        <location filename="../pv/mainwindow.cpp" line="934"/>
         <source>Keep scrolling pinned to the latest incoming samples during capture</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="918"/>
+        <location filename="../pv/mainwindow.cpp" line="938"/>
         <source>Show Sampling &amp;Points</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="921"/>
+        <location filename="../pv/mainwindow.cpp" line="941"/>
         <source>Highlight individual sample dots when zoomed in</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="925"/>
+        <location filename="../pv/mainwindow.cpp" line="945"/>
         <source>Show Analog Minor &amp;Grid</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="928"/>
+        <location filename="../pv/mainwindow.cpp" line="948"/>
         <source>Display minor voltage division grid lines on analog traces</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="932"/>
+        <location filename="../pv/mainwindow.cpp" line="952"/>
         <source>Colored Signal &amp;Backgrounds</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="935"/>
+        <location filename="../pv/mainwindow.cpp" line="955"/>
         <source>Tint each trace row lightly with its signal color</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="940"/>
+        <location filename="../pv/mainwindow.cpp" line="960"/>
         <source>&amp;Tools</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="944"/>
+        <location filename="../pv/mainwindow.cpp" line="964"/>
         <source>Add Protocol &amp;Decoder...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="946"/>
+        <location filename="../pv/mainwindow.cpp" line="966"/>
         <source>Add a protocol decoder (I2C, SPI, UART, CAN, etc.)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="954"/>
+        <location filename="../pv/mainwindow.cpp" line="974"/>
         <source>Add &amp;Math Channel</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="956"/>
+        <location filename="../pv/mainwindow.cpp" line="976"/>
         <source>Add a formula-based math waveform channel</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="965"/>
+        <location filename="../pv/mainwindow.cpp" line="985"/>
         <source>&amp;Preferences...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="968"/>
+        <location filename="../pv/mainwindow.cpp" line="988"/>
         <source>Configure appearance, views, decoders, and logging</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="972"/>
+        <location filename="../pv/mainwindow.cpp" line="992"/>
         <source>&amp;Help</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="975"/>
+        <location filename="../pv/mainwindow.cpp" line="995"/>
         <source>&amp;Keyboard Shortcuts...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="976"/>
+        <location filename="../pv/mainwindow.cpp" line="996"/>
         <source>View a quick reference of PulseView2 keyboard and mouse shortcuts</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="981"/>
+        <location filename="../pv/mainwindow.cpp" line="1001"/>
         <source>Download &amp;Zadig</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="982"/>
+        <location filename="../pv/mainwindow.cpp" line="1002"/>
         <source>Open the Zadig Windows USB driver installer website</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="987"/>
+        <location filename="../pv/mainwindow.cpp" line="1007"/>
         <source>&amp;Sigrok website</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="988"/>
+        <location filename="../pv/mainwindow.cpp" line="1008"/>
         <source>Open the sigrok project website</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="993"/>
+        <location filename="../pv/mainwindow.cpp" line="1013"/>
         <source>&amp;Pulseview2 repo</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="994"/>
+        <location filename="../pv/mainwindow.cpp" line="1014"/>
         <source>Open the PulseView2 GitHub repository</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1002"/>
+        <location filename="../pv/mainwindow.cpp" line="1022"/>
         <source>&amp;About PulseView2...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1004"/>
+        <location filename="../pv/mainwindow.cpp" line="1024"/>
         <source>Show PulseView2 version and library information</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1044"/>
+        <location filename="../pv/mainwindow.cpp" line="1064"/>
         <source>&amp;Reload</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1059"/>
+        <location filename="../pv/mainwindow.cpp" line="1079"/>
         <source>&amp;Busy</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1067"/>
+        <location filename="../pv/mainwindow.cpp" line="1087"/>
         <source>&amp;Cancel Trigger Wait</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1070"/>
+        <location filename="../pv/mainwindow.cpp" line="1090"/>
         <source>&amp;Stop</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1103"/>
-        <location filename="../pv/mainwindow.cpp" line="1743"/>
+        <location filename="../pv/mainwindow.cpp" line="1123"/>
+        <location filename="../pv/mainwindow.cpp" line="1772"/>
         <source>&amp;Reconnect %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1165"/>
+        <location filename="../pv/mainwindow.cpp" line="1185"/>
         <source>No active session</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1170"/>
+        <location filename="../pv/mainwindow.cpp" line="1190"/>
         <source>No device selected</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1182"/>
+        <location filename="../pv/mainwindow.cpp" line="1202"/>
+        <location filename="../pv/mainwindow.cpp" line="2058"/>
         <source>Disconnected</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1184"/>
+        <location filename="../pv/mainwindow.cpp" line="1204"/>
         <source>Stopping...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1188"/>
+        <location filename="../pv/mainwindow.cpp" line="1208"/>
+        <location filename="../pv/mainwindow.cpp" line="2070"/>
         <source>Ready</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1191"/>
+        <location filename="../pv/mainwindow.cpp" line="1211"/>
         <source>Waiting for trigger...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1194"/>
+        <location filename="../pv/mainwindow.cpp" line="1214"/>
         <source>Capturing...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1243"/>
-        <location filename="../pv/mainwindow.cpp" line="1584"/>
-        <location filename="../pv/mainwindow.cpp" line="1610"/>
+        <location filename="../pv/mainwindow.cpp" line="1263"/>
+        <location filename="../pv/mainwindow.cpp" line="1613"/>
+        <location filename="../pv/mainwindow.cpp" line="1639"/>
         <source>Confirmation</source>
         <translation>確認</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1244"/>
+        <location filename="../pv/mainwindow.cpp" line="1264"/>
         <source>There is unsaved data. Close anyway?</source>
         <translation>保存されていないデータがあります。 閉じますか？</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1328"/>
-        <location filename="../pv/mainwindow.cpp" line="1715"/>
+        <location filename="../pv/mainwindow.cpp" line="1348"/>
+        <location filename="../pv/mainwindow.cpp" line="1744"/>
         <source>Capture failed</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1420"/>
+        <location filename="../pv/mainwindow.cpp" line="1440"/>
         <source>Keyboard &amp; Mouse Shortcuts</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1426"/>
+        <location filename="../pv/mainwindow.cpp" line="1446"/>
         <source>Shortcut</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1426"/>
+        <location filename="../pv/mainwindow.cpp" line="1446"/>
         <source>Action</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1435"/>
+        <location filename="../pv/mainwindow.cpp" line="1455"/>
         <source>Space</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1435"/>
+        <location filename="../pv/mainwindow.cpp" line="1455"/>
         <source>Start / Stop acquisition (or reload file)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1436"/>
+        <location filename="../pv/mainwindow.cpp" line="1456"/>
         <source>Ctrl+Shift+R</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1436"/>
+        <location filename="../pv/mainwindow.cpp" line="1456"/>
         <source>Reconnect to last used hardware device</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1437"/>
+        <location filename="../pv/mainwindow.cpp" line="1457"/>
         <source>Ctrl+N</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1437"/>
+        <location filename="../pv/mainwindow.cpp" line="1457"/>
         <source>New capture session tab</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1438"/>
+        <location filename="../pv/mainwindow.cpp" line="1458"/>
         <source>Ctrl+Shift+O</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1438"/>
+        <location filename="../pv/mainwindow.cpp" line="1458"/>
         <source>Open PulseView2 workspace / session (.pv2)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1439"/>
+        <location filename="../pv/mainwindow.cpp" line="1459"/>
         <source>Ctrl+Shift+S</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1439"/>
+        <location filename="../pv/mainwindow.cpp" line="1459"/>
         <source>Save PulseView2 workspace (.pv2)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1440"/>
+        <location filename="../pv/mainwindow.cpp" line="1460"/>
         <source>Ctrl+O</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1440"/>
+        <location filename="../pv/mainwindow.cpp" line="1460"/>
         <source>Open capture data (.sr)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1441"/>
+        <location filename="../pv/mainwindow.cpp" line="1461"/>
         <source>Ctrl+S</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1441"/>
+        <location filename="../pv/mainwindow.cpp" line="1461"/>
         <source>Save capture data (.sr)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1442"/>
+        <location filename="../pv/mainwindow.cpp" line="1462"/>
         <source>Ctrl+R</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1442"/>
+        <location filename="../pv/mainwindow.cpp" line="1462"/>
         <source>Save selected capture data (.sr)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1443"/>
+        <location filename="../pv/mainwindow.cpp" line="1463"/>
         <source>Ctrl+F4 / Ctrl+W</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1443"/>
+        <location filename="../pv/mainwindow.cpp" line="1463"/>
         <source>Close current capture session tab</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1444"/>
+        <location filename="../pv/mainwindow.cpp" line="1464"/>
         <source>Ctrl+Q</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1444"/>
+        <location filename="../pv/mainwindow.cpp" line="1464"/>
         <source>Quit PulseView2</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1445"/>
+        <location filename="../pv/mainwindow.cpp" line="1465"/>
         <source>Mouse Wheel / + / -</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1445"/>
+        <location filename="../pv/mainwindow.cpp" line="1465"/>
         <source>Zoom in / out on time axis</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1446"/>
+        <location filename="../pv/mainwindow.cpp" line="1466"/>
         <source>Shift + Wheel / Drag</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1446"/>
+        <location filename="../pv/mainwindow.cpp" line="1466"/>
         <source>Pan horizontally along time axis</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1447"/>
+        <location filename="../pv/mainwindow.cpp" line="1467"/>
         <source>Ctrl + Wheel</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1447"/>
+        <location filename="../pv/mainwindow.cpp" line="1467"/>
         <source>Scroll vertically through channels</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1448"/>
+        <location filename="../pv/mainwindow.cpp" line="1468"/>
         <source>F</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1448"/>
+        <location filename="../pv/mainwindow.cpp" line="1468"/>
         <source>Zoom to Fit entire capture</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1449"/>
+        <location filename="../pv/mainwindow.cpp" line="1469"/>
         <source>C</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1449"/>
+        <location filename="../pv/mainwindow.cpp" line="1469"/>
         <source>Show / Hide measurement cursors</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1450"/>
+        <location filename="../pv/mainwindow.cpp" line="1470"/>
         <source>D</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1450"/>
+        <location filename="../pv/mainwindow.cpp" line="1470"/>
         <source>Add protocol decoder</source>
         <translation type="unfinished">プロトコルデコーダーを追加</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1451"/>
+        <location filename="../pv/mainwindow.cpp" line="1471"/>
         <source>M</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1451"/>
+        <location filename="../pv/mainwindow.cpp" line="1471"/>
         <source>Add math waveform channel</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1452"/>
+        <location filename="../pv/mainwindow.cpp" line="1472"/>
         <source>S</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1452"/>
+        <location filename="../pv/mainwindow.cpp" line="1472"/>
         <source>Toggle sticky scrolling</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1453"/>
+        <location filename="../pv/mainwindow.cpp" line="1473"/>
         <source>.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1453"/>
+        <location filename="../pv/mainwindow.cpp" line="1473"/>
         <source>Toggle sampling point markers</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1454"/>
+        <location filename="../pv/mainwindow.cpp" line="1474"/>
         <source>G</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1454"/>
+        <location filename="../pv/mainwindow.cpp" line="1474"/>
         <source>Toggle analog minor grid</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1455"/>
+        <location filename="../pv/mainwindow.cpp" line="1475"/>
         <source>B</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1455"/>
+        <location filename="../pv/mainwindow.cpp" line="1475"/>
         <source>Toggle colored signal backgrounds</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1585"/>
-        <location filename="../pv/mainwindow.cpp" line="1611"/>
+        <location filename="../pv/mainwindow.cpp" line="1614"/>
+        <location filename="../pv/mainwindow.cpp" line="1640"/>
         <source>This session contains unsaved data. Close it anyway?</source>
         <translation>このセッションには、保存されていないデータが含まれています。 閉じますか？</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1716"/>
+        <location filename="../pv/mainwindow.cpp" line="1745"/>
         <source>Capture incomplete</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1717"/>
+        <location filename="../pv/mainwindow.cpp" line="1746"/>
         <source>Failed to open device</source>
         <translation type="unfinished">デバイスを開くことができませんでした</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1723"/>
+        <location filename="../pv/mainwindow.cpp" line="1752"/>
         <source>No channels enabled.</source>
         <translation type="unfinished">チャネルが有効になっていません。</translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1737"/>
+        <location filename="../pv/mainwindow.cpp" line="1766"/>
         <source>The device may have been disconnected or reset. Make sure %1 is plugged in and click Reconnect.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1739"/>
+        <location filename="../pv/mainwindow.cpp" line="1768"/>
         <source>the device</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1740"/>
+        <location filename="../pv/mainwindow.cpp" line="1769"/>
         <source>Details: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1743"/>
+        <location filename="../pv/mainwindow.cpp" line="1772"/>
         <source>&amp;Reconnect</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1799"/>
+        <location filename="../pv/mainwindow.cpp" line="1828"/>
         <source>Save Workspace</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1799"/>
+        <location filename="../pv/mainwindow.cpp" line="1828"/>
         <source>Save Current Workspace Session</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1806"/>
+        <location filename="../pv/mainwindow.cpp" line="1835"/>
         <source>Browse...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1807"/>
+        <location filename="../pv/mainwindow.cpp" line="1836"/>
         <source>File:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1812"/>
+        <location filename="../pv/mainwindow.cpp" line="1841"/>
         <source>Include capture data</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1817"/>
+        <location filename="../pv/mainwindow.cpp" line="1846"/>
         <source>No captured waveform data is currently present.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1822"/>
+        <location filename="../pv/mainwindow.cpp" line="1851"/>
         <source>Saving %1 session(s) (%2 with capture data).</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1834"/>
-        <location filename="../pv/mainwindow.cpp" line="1889"/>
+        <location filename="../pv/mainwindow.cpp" line="1863"/>
+        <location filename="../pv/mainwindow.cpp" line="1918"/>
         <source>PulseView2 Workspace (*.pv2);;All Files (*)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1862"/>
+        <location filename="../pv/mainwindow.cpp" line="1891"/>
         <source>Save Workspace Failed</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1863"/>
+        <location filename="../pv/mainwindow.cpp" line="1892"/>
         <source>Failed to save workspace file.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1868"/>
+        <location filename="../pv/mainwindow.cpp" line="1897"/>
         <source>Saved workspace to %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1888"/>
+        <location filename="../pv/mainwindow.cpp" line="1917"/>
         <source>Open Workspace</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1900"/>
+        <location filename="../pv/mainwindow.cpp" line="1929"/>
         <source>Open Workspace Failed</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1901"/>
+        <location filename="../pv/mainwindow.cpp" line="1930"/>
         <source>Failed to open workspace file.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/mainwindow.cpp" line="1958"/>
+        <location filename="../pv/mainwindow.cpp" line="1988"/>
         <source>Opened workspace %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/mainwindow.cpp" line="2003"/>
+        <source>&amp;Rename Capture Session...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/mainwindow.cpp" line="2021"/>
+        <source>Rename Capture Session</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/mainwindow.cpp" line="2022"/>
+        <source>Session name:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/mainwindow.cpp" line="2044"/>
+        <source>No device</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/mainwindow.cpp" line="2052"/>
+        <source>Capturing</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/mainwindow.cpp" line="2055"/>
+        <source>Waiting for trigger</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/mainwindow.cpp" line="2063"/>
+        <source>Device busy in %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/mainwindow.cpp" line="2064"/>
+        <source>Device busy</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/mainwindow.cpp" line="2067"/>
+        <source>Loaded capture file</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/mainwindow.cpp" line="2088"/>
+        <source>Double-click or right-click tab to rename</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -1048,168 +1111,168 @@ A human-readable form has been saved to disk and was written to the log. You may
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="466"/>
+        <location filename="../pv/session.cpp" line="475"/>
         <source>Failed to restore trigger:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="481"/>
+        <location filename="../pv/session.cpp" line="490"/>
         <source>Can&apos;t restore generated signal of unknown type %1 (%2)</source>
         <translation>不明なタイプ%1 (%2)の生成された信号を復元できません</translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="527"/>
+        <location filename="../pv/session.cpp" line="536"/>
         <source>Skipping unavailable view in session setup:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="549"/>
+        <location filename="../pv/session.cpp" line="558"/>
         <source>Skipping invalid view reference in session setup.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="664"/>
+        <location filename="../pv/session.cpp" line="673"/>
         <source>Failed to select device</source>
         <translation>デバイスの選択に失敗しました</translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="727"/>
-        <location filename="../pv/session.cpp" line="730"/>
-        <location filename="../pv/session.cpp" line="733"/>
+        <location filename="../pv/session.cpp" line="738"/>
+        <location filename="../pv/session.cpp" line="741"/>
+        <location filename="../pv/session.cpp" line="744"/>
         <source>Failed to open device</source>
         <translation>デバイスを開くことができませんでした</translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="916"/>
+        <location filename="../pv/session.cpp" line="927"/>
         <source>No previous hardware device to reconnect to.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="948"/>
+        <location filename="../pv/session.cpp" line="959"/>
         <source>Cannot reconnect while the device is capturing in %1.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="949"/>
+        <location filename="../pv/session.cpp" line="960"/>
         <source>Cannot reconnect while the device is capturing in another session.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="965"/>
+        <location filename="../pv/session.cpp" line="976"/>
         <source>Could not find %1. Check that the device is plugged in and try again.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="977"/>
-        <location filename="../pv/session.cpp" line="983"/>
+        <location filename="../pv/session.cpp" line="988"/>
+        <location filename="../pv/session.cpp" line="994"/>
         <source>Found %1, but failed to open it.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1117"/>
+        <location filename="../pv/session.cpp" line="1128"/>
         <source>Error</source>
         <translation>エラー</translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1118"/>
+        <location filename="../pv/session.cpp" line="1129"/>
         <source>Unexpected input format: %1</source>
         <translation>予期しない入力形式：%1％</translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1153"/>
+        <location filename="../pv/session.cpp" line="1164"/>
         <source>Failed to load %1</source>
         <translation>%1 のロードに失敗しました</translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1204"/>
+        <location filename="../pv/session.cpp" line="1215"/>
         <source>No active device set, can&apos;t start acquisition.</source>
         <translation>アクティブなデバイスが設定されていないため、取得を開始できません。</translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1212"/>
+        <location filename="../pv/session.cpp" line="1223"/>
         <source>Device disconnected. Reconnect USB, then use Connect to Device, Scan, and select the analyzer again.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1221"/>
+        <location filename="../pv/session.cpp" line="1232"/>
         <source>No channels enabled.</source>
         <translation>チャネルが有効になっていません。</translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1229"/>
+        <location filename="../pv/session.cpp" line="1240"/>
         <source>No digital device is available.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1234"/>
-        <location filename="../pv/session.cpp" line="1251"/>
+        <location filename="../pv/session.cpp" line="1245"/>
+        <location filename="../pv/session.cpp" line="1262"/>
         <source>Repeated captures require a finite digital acquisition.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1264"/>
+        <location filename="../pv/session.cpp" line="1275"/>
         <source>Device is currently capturing in %1.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1265"/>
+        <location filename="../pv/session.cpp" line="1276"/>
         <source>Device is currently busy in another session.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1905"/>
+        <location filename="../pv/session.cpp" line="1918"/>
         <source>The acquisition ended without an end marker; the capture series was stopped.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1919"/>
+        <location filename="../pv/session.cpp" line="1932"/>
         <source>The acquisition ended without sample data; the capture series was stopped.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1956"/>
+        <location filename="../pv/session.cpp" line="1969"/>
         <source>Out of memory, acquisition stopped.</source>
         <translation>メモリが不足しているため、取得が停止しました。</translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1959"/>
+        <location filename="../pv/session.cpp" line="1972"/>
         <source>Capture incomplete</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="1960"/>
+        <location filename="../pv/session.cpp" line="1973"/>
         <source>
 The received samples can be saved as a partial capture.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="2091"/>
+        <location filename="../pv/session.cpp" line="2104"/>
         <source>Continuous source ended without an end marker.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="2098"/>
+        <location filename="../pv/session.cpp" line="2111"/>
         <source>Continuous input ended before the requested windows were captured.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="2111"/>
+        <location filename="../pv/session.cpp" line="2124"/>
         <source>Capture settings could not be restored: %1
 Use Connect to Device, Scan, and select the device again before another capture.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="2412"/>
+        <location filename="../pv/session.cpp" line="2425"/>
         <source>Can&apos;t handle more than 64 logic channels.</source>
         <translation>64を超えるロジックチャネルを処理することはできません。</translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="2599"/>
+        <location filename="../pv/session.cpp" line="2612"/>
         <source>Out of memory while receiving sample data.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/session.cpp" line="2602"/>
+        <location filename="../pv/session.cpp" line="2615"/>
         <source>Unexpected sample processing failure.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2781,39 +2844,54 @@ Make sure the device is plugged in and try again.</source>
 <context>
     <name>pv::views::tabular_decoder::View</name>
     <message>
-        <location filename="../pv/views/tabular_decoder/view.cpp" line="176"/>
+        <location filename="../pv/views/tabular_decoder/view.cpp" line="201"/>
         <source>Decoder:</source>
         <translation>デコーダー:</translation>
     </message>
     <message>
-        <location filename="../pv/views/tabular_decoder/view.cpp" line="198"/>
+        <location filename="../pv/views/tabular_decoder/view.cpp" line="204"/>
+        <source>Filter decoded data...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/views/tabular_decoder/view.cpp" line="232"/>
         <source>Hide Hidden Rows/Classes</source>
         <translation></translation>
     </message>
     <message>
-        <location filename="../pv/views/tabular_decoder/view.cpp" line="202"/>
+        <location filename="../pv/views/tabular_decoder/view.cpp" line="236"/>
         <source>&amp;Save...</source>
         <translation>保存(&amp;S)</translation>
     </message>
     <message>
-        <location filename="../pv/views/tabular_decoder/view.cpp" line="374"/>
+        <location filename="../pv/views/tabular_decoder/view.cpp" line="409"/>
         <source>Save Annotations as CSV</source>
         <translation>注釈をCSVとして保存</translation>
     </message>
     <message>
-        <location filename="../pv/views/tabular_decoder/view.cpp" line="374"/>
+        <location filename="../pv/views/tabular_decoder/view.cpp" line="409"/>
         <source>CSV Files (*.csv);;Text Files (*.txt);;All Files (*)</source>
         <translation></translation>
     </message>
     <message>
-        <location filename="../pv/views/tabular_decoder/view.cpp" line="442"/>
+        <location filename="../pv/views/tabular_decoder/view.cpp" line="477"/>
         <source>Error</source>
         <translation>エラー</translation>
     </message>
     <message>
-        <location filename="../pv/views/tabular_decoder/view.cpp" line="442"/>
+        <location filename="../pv/views/tabular_decoder/view.cpp" line="477"/>
         <source>File %1 could not be written to.</source>
         <translation>ファイル%1に書き込めませんでした。</translation>
+    </message>
+    <message>
+        <location filename="../pv/views/tabular_decoder/view.cpp" line="646"/>
+        <source> %1 rows</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/views/tabular_decoder/view.cpp" line="648"/>
+        <source> %1 / %2</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -3641,6 +3719,19 @@ until (condition)
     </message>
 </context>
 <context>
+    <name>pv::views::trace::OverviewMinimap</name>
+    <message>
+        <location filename="../pv/views/trace/overviewminimap.cpp" line="66"/>
+        <source>Overview minimap — click to jump, drag window to pan, drag edges or scroll to zoom</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/views/trace/overviewminimap.cpp" line="130"/>
+        <source>Capture overview minimap — run a capture or open a file to inspect the full timeline</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>pv::views::trace::Ruler</name>
     <message>
         <location filename="../pv/views/trace/ruler.cpp" line="157"/>
@@ -3856,59 +3947,79 @@ Each capture has its own time axis. The time between captures is unknown.</sourc
 <context>
     <name>pv::views::trace::View</name>
     <message>
-        <location filename="../pv/views/trace/view.cpp" line="626"/>
+        <location filename="../pv/views/trace/view.cpp" line="638"/>
         <source>Idle: %1 (display compressed; real time preserved)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/views/trace/view.cpp" line="695"/>
+        <location filename="../pv/views/trace/view.cpp" line="707"/>
         <source>Stop capture before compressing idle time</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/views/trace/view.cpp" line="704"/>
-        <location filename="../pv/views/trace/view.cpp" line="2010"/>
+        <location filename="../pv/views/trace/view.cpp" line="716"/>
+        <location filename="../pv/views/trace/view.cpp" line="2022"/>
         <source>Idle compression requires digital traces only</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/views/trace/view.cpp" line="710"/>
+        <location filename="../pv/views/trace/view.cpp" line="722"/>
         <source>Idle compression requires one synchronized digital segment</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/views/trace/view.cpp" line="716"/>
+        <location filename="../pv/views/trace/view.cpp" line="728"/>
         <source>No timed digital capture to compress</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/views/trace/view.cpp" line="722"/>
+        <location filename="../pv/views/trace/view.cpp" line="734"/>
         <source>Idle threshold exceeds the capture range</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/views/trace/view.cpp" line="735"/>
+        <location filename="../pv/views/trace/view.cpp" line="747"/>
         <source>Finding idle intervals...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/views/trace/view.cpp" line="745"/>
+        <location filename="../pv/views/trace/view.cpp" line="757"/>
         <source>Capture changed; idle compression disabled</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/views/trace/view.cpp" line="801"/>
+        <location filename="../pv/views/trace/view.cpp" line="813"/>
         <source>No idle intervals at this threshold</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/views/trace/view.cpp" line="802"/>
+        <location filename="../pv/views/trace/view.cpp" line="814"/>
         <source>%1 folded pauses</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../pv/views/trace/view.cpp" line="1904"/>
+        <location filename="../pv/views/trace/view.cpp" line="1916"/>
         <source>Create marker here</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>pv::views::trace::Viewport</name>
+    <message>
+        <location filename="../pv/views/trace/viewport.cpp" line="403"/>
+        <location filename="../pv/views/trace/viewport.cpp" line="407"/>
+        <source>High</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/views/trace/viewport.cpp" line="403"/>
+        <location filename="../pv/views/trace/viewport.cpp" line="407"/>
+        <source>Low</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../pv/views/trace/viewport.cpp" line="405"/>
+        <source>T: %1  |  %2: %3  |  Duty: %4%</source>
         <translation type="unfinished"></translation>
     </message>
 </context>

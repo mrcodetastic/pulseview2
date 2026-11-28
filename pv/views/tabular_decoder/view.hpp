@@ -24,6 +24,8 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QKeyEvent>
+#include <QLabel>
+#include <QLineEdit>
 #include <QSortFilterProxyModel>
 #include <QTableView>
 #include <QToolButton>
@@ -117,12 +119,15 @@ public:
 
 	void enable_range_filtering(bool value);
 
+	void set_search_text(const QString &text);
+
 protected:
 	bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const override;
 
 private:
 	uint64_t range_start_sample_, range_end_sample_;
 	bool range_filtering_enabled_;
+	QString search_text_;
 };
 
 
@@ -168,6 +173,7 @@ public:
 private:
 	void reset_data();
 	void update_data();
+	void update_match_count();
 
 	void save_data_as_csv(unsigned int save_type) const;
 
@@ -175,6 +181,7 @@ private Q_SLOTS:
 	void on_selected_decoder_changed(int index);
 	void on_hide_hidden_changed(bool checked);
 	void on_view_mode_changed(int index);
+	void on_search_text_changed(const QString &text);
 
 	void on_signal_name_changed(const QString &name);
 	void on_signal_color_changed(const QColor &color);
@@ -202,6 +209,8 @@ private:
 	QComboBox* decoder_selector_;
 	QCheckBox* hide_hidden_cb_;
 	QComboBox* view_mode_selector_;
+	QLineEdit* search_edit_;
+	QLabel* match_count_label_;
 
 	QToolButton* save_button_;
 	QAction* save_action_;
