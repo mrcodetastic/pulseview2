@@ -17,7 +17,10 @@
  * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
 #include <cassert>
+#include <utility>
+#include <vector>
 
 #include <libsigrokcxx/libsigrokcxx.hpp>
 
@@ -201,6 +204,9 @@ shared_ptr<HardwareDevice> Connect::get_selected_device() const
 
 void Connect::populate_drivers()
 {
+	shared_ptr<Driver> fx2_driver;
+	std::vector<std::pair<QString, shared_ptr<Driver>>> other_drivers;
+
 	for (auto& entry : device_manager_.context()->drivers()) {
 		auto name = entry.first;
 		auto driver = entry.second;
@@ -216,11 +222,33 @@ void Connect::populate_drivers()
 		bool supported_device = keys.count(ConfigKey::LOGIC_ANALYZER) |
 			keys.count(ConfigKey::OSCILLOSCOPE);
 
-		if (supported_device)
-			drivers_.addItem(QString("%1 (%2)").arg(
-				driver->long_name().c_str(), name.c_str()),
-				QVariant::fromValue(driver));
+		if (!supported_device)
+			continue;
+
+		if (name == "fx2lafw") {
+			fx2_driver = driver;
+		} else {
+			other_drivers.emplace_back(
+				QString("%1 (%2)").arg(driver->long_name().c_str(), name.c_str()),
+				driver);
+		}
 	}
+
+	std::sort(other_drivers.begin(), other_drivers.end(),
+		[](const auto &a, const auto &b) {
+			return QString::compare(a.first, b.first, Qt::CaseInsensitive) < 0;
+		});
+
+	if (fx2_driver) {
+		drivers_.addItem(
+			tr("Generic 24MHz 8CH Logic Analyzer / FX2 (fx2lafw)"),
+			QVariant::fromValue(fx2_driver));
+		if (!other_drivers.empty())
+			drivers_.insertSeparator(drivers_.count());
+	}
+
+	for (const auto &item : other_drivers)
+		drivers_.addItem(item.first, QVariant::fromValue(item.second));
 }
 
 void Connect::populate_serials(shared_ptr<Driver> driver)
@@ -453,6 +481,8 @@ void Connect::driver_selected(int index)
 {
 	shared_ptr<Driver> driver =
 		drivers_.itemData(index).value<shared_ptr<Driver>>();
+	if (!driver)
+		return;
 
 	unset_connection();
 
