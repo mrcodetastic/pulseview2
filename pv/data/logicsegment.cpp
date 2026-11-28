@@ -170,7 +170,7 @@ void LogicSegment::downsampleT(const uint8_t *in_, uint8_t *&out_, uint64_t len)
 			last_append_extra_++;
 			len--;
 		}
-		if (!len) {
+		if (last_append_extra_ < MipMapScaleFactor) {
 			// Not enough samples available to complete downsample
 			last_append_sample_ = prev;
 			last_append_accumulator_ = acc;
@@ -223,7 +223,7 @@ void LogicSegment::downsampleGeneric(const uint8_t *in, uint8_t *&out, uint64_t 
 			last_append_extra_++;
 			len--;
 		}
-		if (!len) {
+		if (last_append_extra_ < MipMapScaleFactor) {
 			// Not enough samples available to complete downsample
 			last_append_sample_ = prev;
 			last_append_accumulator_ = acc;
@@ -386,13 +386,14 @@ void LogicSegment::append_subsignal_payload(unsigned int index, void *data,
 
 	// Set the bits for this sub-signal where needed
 	// Note: the bytes in *data must either be 0 or 1, nothing else
-	unsigned int index_byte_offs = index / 8;
+	const unsigned int index_byte_offs = index / 8;
+	const unsigned int index_bit_offs = index & 7;
 	uint8_t* output_data = destination.data() + index_byte_offs;
 	uint8_t* input_data = (uint8_t*)data;
 
 	for (uint64_t i = 0; i < data_size; i++) {
 		assert((i * unit_size_ + index_byte_offs) < destination.size());
-		*output_data |= (input_data[i] << index);
+		*output_data |= static_cast<uint8_t>(input_data[i] << index_bit_offs);
 		output_data += unit_size_;
 	}
 
@@ -435,9 +436,13 @@ void LogicSegment::get_subsampled_edges(
 
 	lock_guard<recursive_mutex> lock(mutex_);
 
-	// Make sure we only process as many samples as we have
-	if (end > get_sample_count())
-		end = get_sample_count();
+	const uint64_t sample_count = get_sample_count();
+	if (sample_count == 0 || start >= sample_count)
+		return;
+
+	// Clamp `end` to the last valid inclusive sample index (sample_count - 1).
+	if (end >= sample_count)
+		end = sample_count - 1;
 
 	// Pick the coarsest mipmap level whose block span (16^(min_level+1)) is
 	// at most min_length, so transitions narrower than one display quantum

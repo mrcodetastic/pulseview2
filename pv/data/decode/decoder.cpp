@@ -161,7 +161,13 @@ void Decoder::set_option(const char *id, GVariant *value)
 {
 	assert(value);
 	g_variant_ref(value);
-	options_[id] = value;
+	auto it = options_.find(id);
+	if (it != options_.end()) {
+		g_variant_unref(it->second);
+		it->second = value;
+	} else {
+		options_[id] = value;
+	}
 
 	// If we have a decoder instance, apply option value immediately
 	apply_all_options();
@@ -219,14 +225,19 @@ srd_decoder_inst* Decoder::create_decoder_inst(srd_session *session)
 
 	g_array_set_size(init_pin_states, channels_.size());
 
+	// Keys are borrowed srd_channel::id strings owned by libsigrokdecode,
+	// so pass nullptr as key destroy notify and destroy the table after use.
 	GHashTable *const channels = g_hash_table_new_full(g_str_hash,
-		g_str_equal, g_free, (GDestroyNotify)g_variant_unref);
+		g_str_equal, nullptr, (GDestroyNotify)g_variant_unref);
 
 	for (DecodeChannel *ch : channels_) {
 		if (!ch->assigned_signal)
 			continue;
 
-		init_pin_states->data[ch->id] = ch->initial_pin_state;
+		// init_pin_states is indexed by this decoder's local channel order
+		// (0..dec_num_channels-1), not the stack-global DecodeChannel::id.
+		if (ch->pdch_ && static_cast<size_t>(ch->pdch_->order) < channels_.size())
+			init_pin_states->data[ch->pdch_->order] = ch->initial_pin_state;
 
 		GVariant *const gvar = g_variant_new_int32(ch->bit_id);  // bit_id = bit position
 		g_variant_ref_sink(gvar);
@@ -235,6 +246,7 @@ srd_decoder_inst* Decoder::create_decoder_inst(srd_session *session)
 	}
 
 	srd_inst_channel_set_all(decoder_inst_, channels);
+	g_hash_table_destroy(channels);
 
 	srd_inst_initial_pins_set_all(decoder_inst_, init_pin_states);
 	g_array_free(init_pin_states, true);
@@ -259,7 +271,7 @@ vector<Row*> Decoder::get_rows()
 
 Row* Decoder::get_row_by_id(size_t id)
 {
-	if (id > rows_.size())
+	if (id >= rows_.size())
 		return nullptr;
 
 	return &(rows_[id]);

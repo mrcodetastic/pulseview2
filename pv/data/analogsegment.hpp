@@ -53,7 +53,7 @@ public:
 	struct EnvelopeSection
 	{
 		uint64_t start;
-		unsigned int scale;
+		uint64_t scale;
 		uint64_t length;
 		EnvelopeSample *samples;
 	};

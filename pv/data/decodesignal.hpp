@@ -78,10 +78,13 @@ struct DecodeBinaryClass
 
 struct DecodeSegment
 {
-	// Constructor is a no-op
-	DecodeSegment() { };
-	// Copy constructor is a no-op
-	DecodeSegment(DecodeSegment&& ds) { (void)ds; qCritical() << "Empty DecodeSegment copy constructor called"; };
+	DecodeSegment() :
+		start_time(0),
+		samplerate(0),
+		samples_decoded_incl(0),
+		samples_decoded_excl(0)
+	{}
+	DecodeSegment(DecodeSegment&& ds) = default;
 
 	map<const Row*, RowData> annotation_rows;  // Note: Row is the same for all segments while RowData is not
 	pv::util::Timestamp start_time;
@@ -286,6 +289,8 @@ private:
 	mutable mutex input_mutex_, output_mutex_, decode_pause_mutex_, logic_mux_mutex_;
 	mutable condition_variable decode_input_cond_, decode_pause_cond_,
 		logic_mux_cond_;
+	bool decode_wakeup_ = false;
+	bool logic_mux_wakeup_ = false;
 
 	std::thread decode_thread_, logic_mux_thread_;
 	atomic<bool> decode_interrupt_, logic_mux_interrupt_;

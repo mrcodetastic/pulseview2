@@ -124,7 +124,6 @@ vector< shared_ptr<ViewItem> > Viewport::items()
 
 bool Viewport::touch_event(QTouchEvent *event)
 {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 	QList<QEventPoint> touchPoints = event->points();
 	if (touchPoints.count() != 2) {
 		pinch_zoom_active_ = false;
@@ -137,20 +136,6 @@ bool Viewport::touch_event(QTouchEvent *event)
 	const double x0 = touchPoint0.position().x();
 	const double x1 = touchPoint1.position().x();
 	const bool pressed = (event->touchPointStates() & QEventPoint::Pressed);
-#else
-	QList<QTouchEvent::TouchPoint> touchPoints = event->touchPoints();
-	if (touchPoints.count() != 2) {
-		pinch_zoom_active_ = false;
-		return false;
-	}
-	if (event->device()->type() == QTouchDevice::TouchPad)
-		return false;
-	const auto &touchPoint0 = touchPoints.first();
-	const auto &touchPoint1 = touchPoints.last();
-	const double x0 = touchPoint0.pos().x();
-	const double x1 = touchPoint1.pos().x();
-	const bool pressed = (event->touchPointStates() & Qt::TouchPointPressed);
-#endif
 
 	if (!pinch_zoom_active_ || pressed) {
 		pinch_offset0_ = view_.idle_time_map().to_display(view_.pixel_to_time(x0));
@@ -176,11 +161,7 @@ bool Viewport::touch_event(QTouchEvent *event)
 		} else {
 			// Update the mouse down fields so that continued
 			// dragging with the primary touch will work correctly
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 			mouse_down_point_ = touchPoint0.position().toPoint();
-#else
-			mouse_down_point_ = touchPoint0.pos().toPoint();
-#endif
 			drag();
 		}
 	}
@@ -246,34 +227,19 @@ void Viewport::mouseDoubleClickEvent(QMouseEvent *event)
 {
 	assert(event);
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 	if (event->buttons() & Qt::LeftButton)
 		view_.zoom(2.0, event->position().x());
 	else if (event->buttons() & Qt::RightButton)
 		view_.zoom(-2.0, event->position().x());
-#else
-	if (event->buttons() & Qt::LeftButton)
-		view_.zoom(2.0, event->x());
-	else if (event->buttons() & Qt::RightButton)
-		view_.zoom(-2.0, event->x());
-#endif
 }
 
 void Viewport::wheelEvent(QWheelEvent *event)
 {
 	assert(event);
 
-#if QT_VERSION >= QT_VERSION_CHECK(5, 12, 0)
 	int delta = (event->angleDelta().x() != 0) ? event->angleDelta().x() : event->angleDelta().y();
-#else
-	int delta = event->delta();
-#endif
 
-#if QT_VERSION >= QT_VERSION_CHECK(5, 12, 0)
 	if (event->angleDelta().y() != 0) {
-#else
-	if (event->orientation() == Qt::Vertical) {
-#endif
 		if (event->modifiers() & Qt::ControlModifier) {
 			// Vertical scrolling with the control key pressed
 			// is intrepretted as vertical scrolling
@@ -287,17 +253,9 @@ void Viewport::wheelEvent(QWheelEvent *event)
 				view_.pixel_to_time(-delta));
 		} else {
 			// Vertical scrolling is interpreted as zooming in/out
-#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
 			view_.zoom(delta / 120.0, event->position().x());
-#else
-			view_.zoom(delta / 120.0, event->x());
-#endif
 		}
-#if QT_VERSION >= QT_VERSION_CHECK(5, 12, 0)
 	} else if (event->angleDelta().x() != 0) {
-#else
-	} else if (event->orientation() == Qt::Horizontal) {
-#endif
 		// Horizontal scrolling is interpreted as moving left/right
 		view_.set_scale_offset(view_.scale(),
 			view_.pixel_to_time(delta));

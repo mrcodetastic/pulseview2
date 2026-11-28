@@ -111,6 +111,7 @@ void Logging::set_log_level(int level)
 
 QString Logging::get_log() const
 {
+	lock_guard<mutex> log_lock(log_mutex_);
 	return buffer_.join("<br />\n");
 }
 
@@ -118,7 +119,7 @@ void Logging::log(const QString &text, int source)
 {
 	lock_guard<mutex> log_lock(log_mutex_);
 
-	if (buffer_.size() >= buffer_size_)
+	if (buffer_size_ > 0 && buffer_.size() >= buffer_size_ && !buffer_.isEmpty())
 		buffer_.removeFirst();
 
 	QString s;
@@ -200,13 +201,8 @@ int Logging::log_srd(void *cb_data, int loglevel, const char *format, va_list ar
 	char *text = g_strdup_vprintf(format, args);
 
 	QString s = QString::fromUtf8(text);
-#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
 	for (QString& substring : s.split("\n", Qt::SkipEmptyParts))
-			logging.log(substring, LogSource_srd);
-#else
-	for (QString& substring : s.split("\n", QString::SkipEmptyParts))
-			logging.log(substring, LogSource_srd);
-#endif
+		logging.log(substring, LogSource_srd);
 	g_free(text);
 
 	return SR_OK;
@@ -216,6 +212,7 @@ int Logging::log_srd(void *cb_data, int loglevel, const char *format, va_list ar
 void Logging::on_setting_changed(const QString &key, const QVariant &value)
 {
 	if (key == GlobalSettings::Key_Log_BufferSize) {
+		lock_guard<mutex> log_lock(log_mutex_);
 		// Truncate buffer if needed
 		const int delta = buffer_.size() - value.toInt();
 		if (delta > 0)

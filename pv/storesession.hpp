@@ -77,7 +77,7 @@ public:
 
 	pair<int, int> progress() const;
 
-	const QString& error() const;
+	QString error() const;
 
 	bool start();
 
@@ -87,6 +87,7 @@ public:
 	bool finished() const { return finished_.load(); }
 
 private:
+	void set_error(const QString &msg);
 	bool start_single(bool async, const atomic<bool> *external_interrupt = nullptr);
 	bool is_interrupted() const {
 		return interrupt_.load() || (external_interrupt_ && external_interrupt_->load());

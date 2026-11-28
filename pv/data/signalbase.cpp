@@ -33,6 +33,7 @@
 #include <pv/binding/decoder.hpp>
 
 using std::dynamic_pointer_cast;
+using std::lock_guard;
 using std::make_shared;
 using std::out_of_range;
 using std::shared_ptr;
@@ -153,6 +154,11 @@ shared_ptr<sigrok::Channel> SignalBase::channel() const
 	return channel_;
 }
 
+void SignalBase::set_channel(shared_ptr<sigrok::Channel> channel)
+{
+	channel_ = std::move(channel);
+}
+
 bool SignalBase::is_generated() const
 {
 	// Only signals associated with a device have a corresponding sigrok channel
@@ -269,10 +275,10 @@ QString SignalBase::get_error_message() const
 void SignalBase::set_data(shared_ptr<pv::data::SignalData> data)
 {
 	if (data_) {
-		disconnect(data.get(), SIGNAL(samples_cleared()),
+		disconnect(data_.get(), SIGNAL(samples_cleared()),
 			this, SLOT(on_samples_cleared()));
-		disconnect(data.get(), SIGNAL(samples_added(shared_ptr<Segment>, uint64_t, uint64_t)),
-			this, SLOT(on_samples_added(shared_ptr<Segment>, uint64_t, uint64_t)));
+		disconnect(data_.get(), SIGNAL(samples_added(SharedPtrToSegment, uint64_t, uint64_t)),
+			this, SLOT(on_samples_added(SharedPtrToSegment, uint64_t, uint64_t)));
 
 		shared_ptr<Analog> analog = analog_data();
 		if (analog)
@@ -283,9 +289,9 @@ void SignalBase::set_data(shared_ptr<pv::data::SignalData> data)
 	data_ = data;
 
 	if (data_) {
-		connect(data.get(), SIGNAL(samples_cleared()),
+		connect(data_.get(), SIGNAL(samples_cleared()),
 			this, SLOT(on_samples_cleared()));
-		connect(data.get(), SIGNAL(samples_added(SharedPtrToSegment, uint64_t, uint64_t)),
+		connect(data_.get(), SIGNAL(samples_added(SharedPtrToSegment, uint64_t, uint64_t)),
 			this, SLOT(on_samples_added(SharedPtrToSegment, uint64_t, uint64_t)));
 
 		shared_ptr<Analog> analog = analog_data();
@@ -588,11 +594,7 @@ void SignalBase::restore_settings(QSettings &settings)
 		QVariant value = settings.value("color");
 
 		// Workaround for Qt QColor serialization bug on OSX
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 		bool is_qcolor = (QMetaType::Type)(value.typeId()) == QMetaType::QColor;
-#else
-		bool is_qcolor = (QMetaType::Type)(value.type()) == QMetaType::QColor;
-#endif
 		if (is_qcolor)
 			set_color(value.value<QColor>());
 		else
@@ -773,11 +775,11 @@ void SignalBase::conversion_thread_proc()
 	if (conversion_is_a2l()) {
 		analog_data = dynamic_pointer_cast<Analog>(data_);
 
-		if (analog_data->analog_segments().size() == 0) {
-			unique_lock<mutex> input_lock(conversion_input_mutex_);
-			conversion_input_cond_.wait(input_lock);
-		}
-
+		unique_lock<mutex> input_lock(conversion_input_mutex_);
+		conversion_input_cond_.wait(input_lock, [&] {
+			return conversion_interrupt_.load() ||
+				!analog_data->analog_segments().empty();
+		});
 	} else
 		// Currently, we only handle A2L conversions
 		return;
@@ -806,6 +808,11 @@ void SignalBase::conversion_thread_proc()
 	assert(lsegment);
 
 	do {
+		{
+			lock_guard<mutex> input_lock(conversion_input_mutex_);
+			conversion_wakeup_ = false;
+		}
+
 		convert_single_segment(asegment, lsegment);
 
 		// Only advance to next segment if the current input segment is complete
@@ -834,10 +841,10 @@ void SignalBase::conversion_thread_proc()
 			lsegment = logic_data->logic_segments().back();
 		} else {
 			// No more samples/segments to process, wait for data or interrupt
-			if (!conversion_interrupt_) {
-				unique_lock<mutex> input_lock(conversion_input_mutex_);
-				conversion_input_cond_.wait(input_lock);
-			}
+			unique_lock<mutex> input_lock(conversion_input_mutex_);
+			conversion_input_cond_.wait(input_lock, [&] {
+				return conversion_interrupt_.load() || conversion_wakeup_;
+			});
 		}
 	} while (!conversion_interrupt_);
 
@@ -858,7 +865,11 @@ void SignalBase::start_conversion(bool delayed_start)
 		samples_cleared();
 	}
 
-	conversion_interrupt_ = false;
+	{
+		lock_guard<mutex> input_lock(conversion_input_mutex_);
+		conversion_interrupt_ = false;
+		conversion_wakeup_ = false;
+	}
 	conversion_thread_ = std::thread(&SignalBase::conversion_thread_proc, this);
 }
 
@@ -874,7 +885,10 @@ void SignalBase::set_error_message(QString msg)
 void SignalBase::stop_conversion()
 {
 	// Stop conversion so we can restart it from the beginning
-	conversion_interrupt_ = true;
+	{
+		lock_guard<mutex> input_lock(conversion_input_mutex_);
+		conversion_interrupt_ = true;
+	}
 	conversion_input_cond_.notify_one();
 	if (conversion_thread_.joinable())
 		conversion_thread_.join();
@@ -893,6 +907,10 @@ void SignalBase::on_samples_added(SharedPtrToSegment segment, uint64_t start_sam
 	if (conversion_type_ != NoConversion) {
 		if (conversion_thread_.joinable()) {
 			// Notify the conversion thread since it's running
+			{
+				lock_guard<mutex> input_lock(conversion_input_mutex_);
+				conversion_wakeup_ = true;
+			}
 			conversion_input_cond_.notify_one();
 		} else {
 			// Start the conversion thread unless the delay timer is running
@@ -909,6 +927,10 @@ void SignalBase::on_input_segment_completed()
 	if (conversion_type_ != NoConversion)
 		if (conversion_thread_.joinable()) {
 			// Notify the conversion thread since it's running
+			{
+				lock_guard<mutex> input_lock(conversion_input_mutex_);
+				conversion_wakeup_ = true;
+			}
 			conversion_input_cond_.notify_one();
 		}
 }

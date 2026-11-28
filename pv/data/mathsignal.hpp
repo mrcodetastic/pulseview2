@@ -136,6 +136,7 @@ private:
 
 	mutable mutex input_mutex_;
 	mutable condition_variable gen_input_cond_;
+	bool gen_wakeup_ = false;
 
 	std::thread gen_thread_;
 	atomic<bool> gen_interrupt_;

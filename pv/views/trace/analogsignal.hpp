@@ -181,8 +181,6 @@ private:
 	double signal_min_, signal_max_;  // Min/max values of this signal's analog data
 
 	bool show_analog_minor_grid_;
-	QColor high_fill_color_;
-	bool show_sampling_points_, fill_high_areas_;
 
 	int conversion_threshold_disp_mode_;
 

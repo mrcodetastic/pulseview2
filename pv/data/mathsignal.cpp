@@ -18,6 +18,7 @@
  */
 
 #include <limits>
+#include <unordered_map>
 
 #include <QDebug>
 
@@ -30,6 +31,7 @@
 #include <pv/data/signalbase.hpp>
 
 using std::dynamic_pointer_cast;
+using std::lock_guard;
 using std::make_shared;
 using std::min;
 using std::unique_lock;
@@ -51,7 +53,7 @@ struct fnc_sample : public exprtk::igeneric_function<T>
 	fnc_sample(MathSignal& owner) :
 		exprtk::igeneric_function<T>("ST"),  // Require channel name and sample number
 		owner_(owner),
-		sig_data(nullptr)
+		current_segment(0)
 	{
 	}
 
@@ -66,8 +68,15 @@ struct fnc_sample : public exprtk::igeneric_function<T>
 		if (sample_num < 0)
 			return 0;
 
-		if (!sig_data)
+		signal_data *sig_data = nullptr;
+		auto it = sig_cache_.find(str_sig_name);
+		if (it != sig_cache_.end()) {
+			sig_data = it->second;
+		} else {
 			sig_data = owner_.signal_from_name(str_sig_name);
+			if (sig_data)
+				sig_cache_.emplace(str_sig_name, sig_data);
+		}
 
 		if (!sig_data)
 			// There doesn't actually exist a signal with that name
@@ -80,21 +89,27 @@ struct fnc_sample : public exprtk::igeneric_function<T>
 
 	MathSignal& owner_;
 	uint32_t current_segment;
-	signal_data* sig_data;
+	std::unordered_map<std::string, signal_data*> sig_cache_;
 };
 
 
 MathSignal::MathSignal(pv::Session &session) :
 	SignalBase(nullptr, SignalBase::MathChannel),
 	session_(session),
+	custom_sample_rate_(0),
+	custom_sample_count_(0),
 	use_custom_sample_rate_(false),
 	use_custom_sample_count_(false),
+	generation_chunk_size_(ChunkLength),
 	expression_(""),
 	error_type_(ErrorType::None),
+	gen_interrupt_(false),
 	exprtk_unknown_symbol_table_(nullptr),
 	exprtk_symbol_table_(nullptr),
 	exprtk_expression_(nullptr),
 	exprtk_parser_(nullptr),
+	exprtk_current_time_(0),
+	exprtk_current_sample_(0),
 	fnc_sample_(nullptr)
 {
 	uint32_t sig_idx = session_.get_next_signal_index(MathChannel);
@@ -185,14 +200,10 @@ uint64_t MathSignal::get_working_sample_count(uint32_t segment_id) const
 				shared_ptr<Analog> a = sb->analog_data();
 				auto analog_segments = a->analog_segments();
 
-				if (analog_segments.empty()) {
+				if (analog_segments.empty() || segment_id >= analog_segments.size()) {
 					result = 0;
-					continue;
+					break;
 				}
-
-				const uint32_t highest_segment_id = (analog_segments.size() - 1);
-				if (segment_id > highest_segment_id)
-					continue;
 
 				const shared_ptr<AnalogSegment> segment = analog_segments.at(segment_id);
 				result = min(result, (int64_t)segment->get_sample_count());
@@ -249,7 +260,10 @@ void MathSignal::update_completeness(uint32_t segment_id, uint64_t output_sample
 void MathSignal::reset_generation()
 {
 	if (gen_thread_.joinable()) {
-		gen_interrupt_ = true;
+		{
+			lock_guard<mutex> lock(input_mutex_);
+			gen_interrupt_ = true;
+		}
 		gen_input_cond_.notify_one();
 		gen_thread_.join();
 	}
@@ -377,7 +391,11 @@ void MathSignal::begin_generation()
 		if (input_signals_.empty())
 			connect(&session_, SIGNAL(data_received()),	this, SLOT(on_data_received()));
 
-		gen_interrupt_ = false;
+		{
+			lock_guard<mutex> lock(input_mutex_);
+			gen_interrupt_ = false;
+			gen_wakeup_ = false;
+		}
 		gen_thread_ = std::thread(&MathSignal::generation_proc, this);
 	}
 }
@@ -483,6 +501,10 @@ void MathSignal::generation_proc()
 	// Session::get_samplerate() returns 1 Hz as a sentinel while no real rate is
 	// known yet; wait until a valid sample rate arrives before allocating output.
 	do {
+		{
+			lock_guard<mutex> lock(input_mutex_);
+			gen_wakeup_ = false;
+		}
 		if (use_custom_sample_rate_)
 			data_->set_samplerate(custom_sample_rate_);
 		else
@@ -490,7 +512,9 @@ void MathSignal::generation_proc()
 
 		if (data_->get_samplerate() == 1) {
 			unique_lock<mutex> gen_input_lock(input_mutex_);
-			gen_input_cond_.wait(gen_input_lock);
+			gen_input_cond_.wait(gen_input_lock, [&] {
+				return gen_interrupt_.load() || gen_wakeup_;
+			});
 		}
 	} while ((!gen_interrupt_) && (data_->get_samplerate() == 1));
 
@@ -507,6 +531,11 @@ void MathSignal::generation_proc()
 
 	// Create analog samples
 	do {
+		{
+			lock_guard<mutex> lock(input_mutex_);
+			gen_wakeup_ = false;
+		}
+
 		const uint64_t input_sample_count = get_working_sample_count(segment_id);
 		const uint64_t output_sample_count = output_segment->get_sample_count();
 
@@ -526,11 +555,11 @@ void MathSignal::generation_proc()
 				processed_samples += sample_count;
 
 				// Notify consumers of this signal's data
-				samples_added(segment_id, start_sample, start_sample + processed_samples);
+				samples_added(segment_id, start_sample, start_sample + sample_count);
 			} while (!gen_interrupt_ && (processed_samples < samples_to_process));
 		}
 
-		update_completeness(segment_id, output_sample_count);
+		update_completeness(segment_id, output_segment->get_sample_count());
 
 		if (output_segment->is_complete() && (segment_id < session_.get_highest_segment_id())) {
 				// Process next segment
@@ -539,12 +568,12 @@ void MathSignal::generation_proc()
 				output_segment =
 					make_shared<AnalogSegment>(*analog.get(), segment_id, analog->get_samplerate());
 				analog->push_segment(output_segment);
-		}
-
-		if (!gen_interrupt_ && (samples_to_process == 0)) {
+		} else if (samples_to_process == 0) {
 			// Wait for more input
 			unique_lock<mutex> gen_input_lock(input_mutex_);
-			gen_input_cond_.wait(gen_input_lock);
+			gen_input_cond_.wait(gen_input_lock, [&] {
+				return gen_interrupt_.load() || gen_wakeup_;
+			});
 		}
 	} while (!gen_interrupt_);
 }
@@ -645,12 +674,21 @@ void MathSignal::on_capture_state_changed(int state)
 		begin_generation();
 
 	// Make sure we don't miss any input samples, just in case
-	if (state == Session::Stopped)
+	if (state == Session::Stopped) {
+		{
+			lock_guard<mutex> lock(input_mutex_);
+			gen_wakeup_ = true;
+		}
 		gen_input_cond_.notify_one();
+	}
 }
 
 void MathSignal::on_data_received()
 {
+	{
+		lock_guard<mutex> lock(input_mutex_);
+		gen_wakeup_ = true;
+	}
 	gen_input_cond_.notify_one();
 }
 

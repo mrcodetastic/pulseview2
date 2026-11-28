@@ -131,6 +131,7 @@ public:
 	 * Generated channels don't have a SR channel.
 	 */
 	shared_ptr<sigrok::Channel> channel() const;
+	void set_channel(shared_ptr<sigrok::Channel> channel);
 
 	/**
 	 * Returns whether this channel is generated or a channel associated with the device.
@@ -417,6 +418,7 @@ protected:
 	atomic<bool> conversion_interrupt_;
 	mutex conversion_input_mutex_;
 	condition_variable conversion_input_cond_;
+	bool conversion_wakeup_ = false;
 	QTimer delayed_conversion_starter_;
 
 	QString internal_name_, name_;

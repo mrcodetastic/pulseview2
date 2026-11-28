@@ -130,7 +130,10 @@ Session::Session(DeviceManager &device_manager, QString name) :
 	capture_state_(Stopped),
 	stop_requested_(false),
 	cur_samplerate_(0),
-	data_saved_(true)
+	highest_segment_id_(-1),
+	out_of_memory_(false),
+	data_saved_(true),
+	frame_began_(false)
 {
 	// Use this name also for the QObject instance
 	setObjectName(name_);
@@ -421,7 +424,8 @@ void Session::save_settings(QSettings &settings) const
 void Session::restore_setup(QSettings &settings)
 {
 	// Reset main view, remove all other views
-	main_view_->reset_view_state();
+	if (main_view_)
+		main_view_->reset_view_state();
 	for (auto &v : vector< shared_ptr<views::ViewBase> >(views_)) {
 		if (v != main_view_)
 			remove_view(v);
@@ -700,13 +704,9 @@ void Session::set_device(shared_ptr<devices::Device> device)
 	all_signal_data_.clear();
 	signalbases_.clear();
 	cur_logic_segment_.reset();
-
-	for (auto& entry : cur_analog_segments_) {
-		shared_ptr<sigrok::Channel>(entry.first).reset();
-		shared_ptr<data::AnalogSegment>(entry.second).reset();
-	}
-
+	cur_analog_segments_.clear();
 	logic_data_.reset();
+	cur_samplerate_ = 0;
 
 	signals_changed();
 
@@ -732,33 +732,13 @@ void Session::set_device(shared_ptr<devices::Device> device)
 	}
 
 	if (device_) {
-		device_->connect_datafeed([=]
-			(shared_ptr<sigrok::Device> device, shared_ptr<Packet> packet) {
-				data_feed_in(device, packet);
-			});
+		try {
+			cur_samplerate_ = device_->read_config<uint64_t>(ConfigKey::SAMPLERATE);
+		} catch (Error&) {
+			// Device may not expose SAMPLERATE before capture starts.
+		}
 
-		device_->set_frame_callback([this](bool begin) {
-			if (begin) {
-				{ lock_guard<recursive_mutex> lock(data_mutex_);
-				  capture_outcome_.clear(); capture_error_.clear(); }
-				feed_in_frame_begin();
-			} else {
-				std::vector<util::Timestamp> triggers;
-				if (acquisition_received_samples_) {
-					const util::Timestamp segment_duration =
-						util::Timestamp(get_segment_sample_count(highest_segment_id_)) / get_samplerate();
-					for (const auto& text : device_->frame_triggers()) {
-						const util::Timestamp time(text);
-						if (time <= segment_duration)
-							triggers.push_back(time);
-					}
-				}
-				restore_segment_triggers(triggers);
-				uint64_t origin;
-				if (acquisition_received_samples_ && device_->frame_origin(origin)) set_segment_origin(origin);
-				feed_in_frame_end();
-			}
-		});
+		attach_device_callbacks();
 		update_signals();
 
 		if (auto hw = dynamic_pointer_cast<devices::HardwareDevice>(device_)) {
@@ -772,6 +752,106 @@ void Session::set_device(shared_ptr<devices::Device> device)
 	}
 
 	device_changed();
+}
+
+void Session::attach_device_callbacks()
+{
+	if (!device_)
+		return;
+
+	device_->connect_datafeed([=]
+		(shared_ptr<sigrok::Device> device, shared_ptr<Packet> packet) {
+			data_feed_in(device, packet);
+		});
+
+	device_->set_frame_callback([this](bool begin) {
+		if (begin) {
+			{ lock_guard<recursive_mutex> lock(data_mutex_);
+			  capture_outcome_.clear(); capture_error_.clear(); }
+			feed_in_frame_begin();
+		} else {
+			std::vector<util::Timestamp> triggers;
+			if (acquisition_received_samples_) {
+				const util::Timestamp segment_duration =
+					util::Timestamp(get_segment_sample_count(highest_segment_id_)) / get_samplerate();
+				for (const auto& text : device_->frame_triggers()) {
+					const util::Timestamp time(text);
+					if (time <= segment_duration)
+						triggers.push_back(time);
+				}
+			}
+			restore_segment_triggers(triggers);
+			uint64_t origin;
+			if (acquisition_received_samples_ && device_->frame_origin(origin)) set_segment_origin(origin);
+			feed_in_frame_end();
+		}
+	});
+}
+
+bool Session::rebind_reconnected_device(shared_ptr<devices::HardwareDevice> found)
+{
+	if (!found)
+		return false;
+
+	// Only rebind in place if the session already has hardware channels whose
+	// type and index layout match the reconnected device, preserving captured
+	// waveforms, decoders, math channels, and view state.
+	vector<shared_ptr<data::SignalBase>> hw_signals;
+	for (const auto &sb : signalbases_) {
+		if (sb && sb->channel())
+			hw_signals.push_back(sb);
+	}
+	if (hw_signals.empty())
+		return false;
+
+	bool rebound_in_place = false;
+	try {
+		found->open();
+		const auto sr_dev = found->device();
+		if (sr_dev) {
+			const auto new_channels = sr_dev->channels();
+			bool channels_match = (new_channels.size() == hw_signals.size());
+			if (channels_match) {
+				for (size_t i = 0; i < hw_signals.size(); i++) {
+					const auto old_ch = hw_signals[i]->channel();
+					if (!old_ch ||
+						old_ch->type() != new_channels[i]->type() ||
+						old_ch->index() != new_channels[i]->index()) {
+						channels_match = false;
+						break;
+					}
+				}
+			}
+
+			if (channels_match) {
+				for (size_t i = 0; i < hw_signals.size(); i++)
+					hw_signals[i]->set_channel(new_channels[i]);
+
+				device_ = found;
+				device_reconnect_needed_ = false;
+				attach_device_callbacks();
+
+				const RecentDevice rec = device_manager_.make_recent_device(found);
+				if (rec.is_valid()) {
+					device_manager_.record_recent_device(rec);
+					const auto recent = device_manager_.recent_devices();
+					last_hardware_device_ = recent.empty() ? rec : recent.front();
+				}
+				rebound_in_place = true;
+			}
+		}
+	} catch (const QString &) {
+		return false;
+	} catch (const sigrok::Error &) {
+		return false;
+	} catch (const std::exception &) {
+		return false;
+	}
+
+	if (!rebound_in_place) {
+		try { found->close(); } catch (...) { }
+	}
+	return rebound_in_place;
 }
 
 bool Session::has_reconnect_target() const
@@ -879,11 +959,21 @@ bool Session::reconnect_last_device(QString *error_out)
 		return false;
 	}
 
-	set_device(found);
-	if (!device_ || !device_->device()) {
-		if (error_out)
-			*error_out = tr("Found %1, but failed to open it.").arg(target.display_name);
-		return false;
+	const bool rebound_in_place = rebind_reconnected_device(found);
+
+	if (!rebound_in_place) {
+		if (!found) {
+			device_changed();
+			if (error_out)
+				*error_out = tr("Found %1, but failed to open it.").arg(target.display_name);
+			return false;
+		}
+		set_device(found);
+		if (!device_ || !device_->device()) {
+			if (error_out)
+				*error_out = tr("Found %1, but failed to open it.").arg(target.display_name);
+			return false;
+		}
 	}
 
 	// Restore capture settings and channel configuration
@@ -902,6 +992,9 @@ bool Session::reconnect_last_device(QString *error_out)
 				Glib::Variant<guint64>::create(saved_limit_samples));
 		} catch (...) { }
 	}
+	try {
+		cur_samplerate_ = device_->read_config<uint64_t>(ConfigKey::SAMPLERATE);
+	} catch (Error&) { }
 
 	const auto channels = sr_dev->channels();
 	if (channels.size() == saved_channel_enabled.size()) {
@@ -1373,11 +1466,34 @@ double Session::get_samplerate() const
 		for (const shared_ptr<pv::data::Segment>& s : segments)
 			samplerate = max(samplerate, s->samplerate());
 	}
+	if (samplerate == 0.0) {
+		const uint64_t configured = cur_samplerate_.load();
+		if (configured > 0)
+			samplerate = static_cast<double>(configured);
+	}
 	// If there is no sample rate given we use samples as unit
 	if (samplerate == 0.0)
 		samplerate = 1.0;
 
 	return samplerate;
+}
+
+bool Session::has_known_samplerate() const
+{
+	lock_guard<recursive_mutex> lock(data_mutex_);
+	for (const shared_ptr<pv::data::SignalData>& d : all_signal_data_) {
+		assert(d);
+		for (const shared_ptr<pv::data::Segment>& s : d->segments())
+			if (s->samplerate() > 0)
+				return true;
+	}
+	return cur_samplerate_.load() > 0;
+}
+
+void Session::set_configured_samplerate(uint64_t rate)
+{
+	cur_samplerate_ = rate;
+	samplerate_changed();
 }
 
 Glib::DateTime Session::get_acquisition_start_time() const
@@ -2134,6 +2250,7 @@ void Session::feed_in_meta(shared_ptr<Meta> meta)
 			if (active_window_mode_ && g_variant_get_uint64(entry.second.gobj()) != window_rate_)
 				throw std::runtime_error("Source sample rate changed during continuous capture windows.");
 			cur_samplerate_ = g_variant_get_uint64(entry.second.gobj());
+			samplerate_changed();
 			break;
 #ifdef HAVE_SR_CONF_CAPTURE_STATUS
 		case SR_CONF_CAPTURE_STATUS: {
@@ -2165,10 +2282,15 @@ void Session::feed_in_meta(shared_ptr<Meta> meta)
 
 void Session::feed_in_trigger()
 {
-	// The channel containing most samples should be most accurate
-	uint64_t sample_count = 0;
+	uint32_t segment_id = 0;  // Default segment when no frames are used
+	util::Timestamp timestamp;
 
 	{
+		lock_guard<recursive_mutex> lock(data_mutex_);
+
+		// The channel containing most samples should be most accurate
+		uint64_t sample_count = 0;
+
 		for (const shared_ptr<pv::data::SignalData>& d : all_signal_data_) {
 			assert(d);
 			uint64_t temp_count = 0;
@@ -2181,28 +2303,27 @@ void Session::feed_in_trigger()
 			if (temp_count > sample_count)
 				sample_count = temp_count;
 		}
+
+		if (frame_began_ && !cur_logic_segment_ && cur_analog_segments_.empty())
+			sample_count = 0;
+
+		// If a frame began, we'd ideally be able to use the highest segment ID for
+		// the trigger. However, as new segments are only created when logic or
+		// analog data comes in, this doesn't work if the trigger appears right
+		// after the beginning of the frame, before any sample data.
+		// For this reason, we use highest segment ID + 1 if no sample data came in
+		// yet and the highest segment ID otherwise.
+		if (frame_began_) {
+			segment_id = highest_segment_id_;
+			if (!cur_logic_segment_ && cur_analog_segments_.empty())
+				segment_id++;
+		}
+
+		// TODO Create timestamp from segment start time + segment's current sample count
+		timestamp = sample_count / get_samplerate();
+		trigger_list_.emplace_back(segment_id, timestamp);
 	}
 
-	if (frame_began_ && !cur_logic_segment_ && cur_analog_segments_.empty())
-		sample_count = 0;
-
-	uint32_t segment_id = 0;  // Default segment when no frames are used
-
-	// If a frame began, we'd ideally be able to use the highest segment ID for
-	// the trigger. However, as new segments are only created when logic or
-	// analog data comes in, this doesn't work if the trigger appears right
-	// after the beginning of the frame, before any sample data.
-	// For this reason, we use highest segment ID + 1 if no sample data came in
-	// yet and the highest segment ID otherwise.
-	if (frame_began_) {
-		segment_id = highest_segment_id_;
-		if (!cur_logic_segment_ && (cur_analog_segments_.size() == 0))
-			segment_id++;
-	}
-
-	// TODO Create timestamp from segment start time + segment's current sample count
-	util::Timestamp timestamp = sample_count / get_samplerate();
-	trigger_list_.emplace_back(segment_id, timestamp);
 	trigger_event(segment_id, timestamp);
 }
 

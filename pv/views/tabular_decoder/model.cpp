@@ -77,10 +77,12 @@ QVariant AnnotationCollectionModel::data_from_ann(const Annotation* ann, int ind
 	switch (index) {
 	case 0: return QVariant((qulonglong)ann->start_sample());  // Column #0, Start Sample
 	case 1: {                                                  // Column #1, Start Time
-			Timestamp t = ann->start_sample() / signal_->get_samplerate();
-			QString unit = signal_->get_samplerate() ? tr("s") : tr("sa");
+			const double rate = signal_->get_samplerate();
+			const Timestamp t = (rate > 0) ?
+				(Timestamp(ann->start_sample()) / rate) : Timestamp(ann->start_sample());
+			const QString unit = (rate > 0) ? tr("s") : tr("sa");
 			QString s;
-			if ((t < 60) || (signal_->get_samplerate() == 0))  // i.e. if unit is sa
+			if ((t < 60) || (rate <= 0))  // i.e. if unit is sa
 				s = format_time_si(t, SIPrefix::unspecified, 3, unit, false);
 			else
 				s = format_time_minutes(t, 3, false);
@@ -245,6 +247,9 @@ void AnnotationCollectionModel::set_signal_and_segment(data::DecodeSignal* signa
 
 	if (!dataset_ || dataset_->empty()) {
 		prev_segment_ = current_segment;
+		prev_last_row_ = 0;
+		dataChanged(QModelIndex(), QModelIndex());
+		layoutChanged();
 		return;
 	}
 
@@ -253,14 +258,12 @@ void AnnotationCollectionModel::set_signal_and_segment(data::DecodeSignal* signa
 	// Force the view associated with this model to update when the segment changes
 	if (prev_segment_ != current_segment) {
 		dataChanged(index(0, 0), index(new_row_count, 0));
-		layoutChanged();
-	} else {
+	} else if (prev_last_row_ < new_row_count) {
 		// Force the view associated with this model to update when we have more annotations
-		if (prev_last_row_ < new_row_count) {
-			dataChanged(index(prev_last_row_, 0), index(new_row_count, 0));
-			layoutChanged();
-		}
+		dataChanged(index(prev_last_row_, 0), index(new_row_count, 0));
 	}
+
+	layoutChanged();
 
 	prev_segment_ = current_segment;
 	prev_last_row_ = new_row_count;

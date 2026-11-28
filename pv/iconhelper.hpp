@@ -27,7 +27,7 @@ namespace pv {
 /**
  * Loads an SVG icon from Qt resources (replacing `currentColor`) so that it
  * adapts dynamically to the active Light/Dark QPalette and HiDPI scaling
- * across Qt5 and Qt6 on Windows, macOS, and Linux.
+ * across Windows, macOS, and Linux.
  *
  * If `accent` is valid, that color is used in Normal/Active modes while
  * Disabled mode falls back to the palette's disabled text color.

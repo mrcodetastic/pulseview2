@@ -76,13 +76,8 @@ DeviceToolButton::DeviceToolButton(QWidget *parent,
 		"  border-bottom-right-radius: 3px;"
 		"}");
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 	connect(&mapper_, SIGNAL(mappedObject(QObject*)),
 		this, SLOT(on_action(QObject*)));
-#else
-	connect(&mapper_, SIGNAL(mapped(QObject*)),
-		this, SLOT(on_action(QObject*)));
-#endif
 
 	connect(&menu_, SIGNAL(hovered(QAction*)),
 		this, SLOT(on_menu_hovered(QAction*)));

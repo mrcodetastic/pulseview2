@@ -215,11 +215,7 @@ MainBar::MainBar(Session &session, QWidget *parent, pv::views::trace::View *view
 	action_save_selection_as_->setIcon(QIcon::fromTheme("document-save-as",
 		QIcon(":/icons/document-save-as.png")));
 	action_save_selection_as_->setStatusTip(tr("Save only the range between measurement cursors"));
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 	action_save_selection_as_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
-#else
-	action_save_selection_as_->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_R));
-#endif
 	action_save_selection_as_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 	connect(action_save_selection_as_, SIGNAL(triggered(bool)),
 		this, SLOT(on_actionSaveSelectionAs_triggered()));
@@ -237,11 +233,7 @@ MainBar::MainBar(Session &session, QWidget *parent, pv::views::trace::View *view
 	action_reconnect_->setText(tr("&Reconnect Last Device"));
 	action_reconnect_->setIcon(icon_reload_);
 	action_reconnect_->setStatusTip(tr("Rescan and reconnect to the last used hardware device"));
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 	action_reconnect_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
-#else
-	action_reconnect_->setShortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_R));
-#endif
 	action_reconnect_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 	connect(action_reconnect_, SIGNAL(triggered(bool)),
 		this, SLOT(on_actionReconnect_triggered()));
@@ -911,6 +903,7 @@ void MainBar::commit_sample_rate()
 	try {
 		sr_dev->config_set(ConfigKey::SAMPLERATE,
 			Glib::Variant<guint64>::create(sample_rate));
+		session_.set_configured_samplerate(sample_rate);
 		update_sample_rate_selector();
 	} catch (Error& error) {
 		qDebug() << tr("Failed to configure samplerate:") << error.what();

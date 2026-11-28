@@ -107,6 +107,7 @@ set(pulseview_TEST_SOURCES
 	view/ruler.cpp
 	view/idle.cpp
 	test.cpp
+	bugfix_regressions.cpp
 	trigger_settings.cpp
 	trigger_sequence.cpp
 	util.cpp

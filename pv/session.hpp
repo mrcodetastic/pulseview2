@@ -199,6 +199,7 @@ public:
 	bool has_reconnect_target() const;
 	QString reconnect_target_name() const;
 	bool reconnect_last_device(QString *error_out = nullptr);
+	bool rebind_reconnected_device(shared_ptr<devices::HardwareDevice> found);
 	void start_capture(function<void (const QString)> error_handler);
 	void stop_capture();
 	void request_stop_capture();
@@ -218,6 +219,8 @@ public:
 	void restore_segment_triggers(const vector<util::Timestamp>& triggers);
 
 	double get_samplerate() const;
+	bool has_known_samplerate() const;
+	void set_configured_samplerate(uint64_t rate);
 	Glib::DateTime get_acquisition_start_time() const;
 
 	uint32_t get_highest_segment_id() const;
@@ -298,6 +301,7 @@ Q_SIGNALS:
 	void signals_changed();
 
 	void name_changed();
+	void samplerate_changed();
 
 	void trigger_event(int segment_id, util::Timestamp location);
 	void trigger_changed();
@@ -331,6 +335,7 @@ private:
 	shared_ptr<pv::toolbars::MainBar> main_bar_;
 
 	void complete_active_segments_locked();
+	void attach_device_callbacks();
 
 	// Locking invariant: whenever both mutexes are needed, ALWAYS acquire
 	// data_mutex_ before sampling_mutex_ (never the reverse) to prevent deadlock.
@@ -370,7 +375,7 @@ private:
 
 	mutable recursive_mutex data_mutex_;
 	shared_ptr<data::Logic> logic_data_;
-	uint64_t cur_samplerate_;
+	std::atomic<uint64_t> cur_samplerate_;
 	shared_ptr<data::LogicSegment> cur_logic_segment_;
 	map< shared_ptr<sigrok::Channel>, shared_ptr<data::AnalogSegment> >
 		cur_analog_segments_;
@@ -382,7 +387,7 @@ private:
 	std::thread sampling_thread_;
 
 	bool out_of_memory_;
-	bool data_saved_;
+	std::atomic<bool> data_saved_;
 	bool frame_began_;
 
 	QElapsedTimer acq_time_;
