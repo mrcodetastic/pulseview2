@@ -122,8 +122,11 @@ std::function<void()> Device::suspend_capture_limits()
 
 void Device::connect_datafeed(FeedCallback callback)
 {
+	if (session_)
+		session_->remove_datafeed_callbacks();
 	datafeed_callback_ = std::move(callback);
-	session_->add_datafeed_callback(datafeed_callback_);
+	if (session_)
+		session_->add_datafeed_callback(datafeed_callback_);
 }
 
 void Device::disconnect_datafeed()
@@ -131,6 +134,39 @@ void Device::disconnect_datafeed()
 	if (session_) session_->remove_datafeed_callbacks();
 	datafeed_callback_ = {};
 	frame_callback_ = {};
+}
+
+bool Device::try_acquire_capture(Session *owner)
+{
+	std::lock_guard<std::mutex> lock(capture_owner_mutex_);
+	if (capture_owner_ && capture_owner_ != owner)
+		return false;
+	capture_owner_ = owner;
+	return true;
+}
+
+void Device::release_capture(Session *owner)
+{
+	std::lock_guard<std::mutex> lock(capture_owner_mutex_);
+	if (capture_owner_ == owner)
+		capture_owner_ = nullptr;
+}
+
+Session* Device::capture_owner() const
+{
+	std::lock_guard<std::mutex> lock(capture_owner_mutex_);
+	return capture_owner_;
+}
+
+bool Device::is_capturing() const
+{
+	return capture_owner() != nullptr;
+}
+
+bool Device::is_busy_for(const Session *session) const
+{
+	std::lock_guard<std::mutex> lock(capture_owner_mutex_);
+	return capture_owner_ != nullptr && capture_owner_ != session;
 }
 
 void Device::start()

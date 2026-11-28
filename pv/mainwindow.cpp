@@ -26,6 +26,7 @@
 #include <cstdarg>
 #include <cstdint>
 #include <iterator>
+#include <set>
 
 #include <QAction>
 #include <QApplication>
@@ -1048,10 +1049,20 @@ void MainWindow::update_acq_button(Session *session)
 	}
 
 	if (menu_action_run_stop_) {
+		const bool has_device = session && session->device() && session->device()->device();
+		const bool reconnect_needed = session && session->device_needs_reconnect();
+		const bool stopping = session && session->stop_requested();
+		const bool device_busy = has_device && session->device()->is_busy_for(session);
+
 		if (state == Session::Stopped) {
-			menu_action_run_stop_->setIcon(
-				(session && session->using_file_device()) ? icon_reload_ : icon_play_);
-			menu_action_run_stop_->setText(run_caption);
+			if (device_busy) {
+				menu_action_run_stop_->setIcon(icon_waiting_);
+				menu_action_run_stop_->setText(tr("&Busy"));
+			} else {
+				menu_action_run_stop_->setIcon(
+					(session && session->using_file_device()) ? icon_reload_ : icon_play_);
+				menu_action_run_stop_->setText(run_caption);
+			}
 		} else if (state == Session::AwaitingTrigger) {
 			menu_action_run_stop_->setIcon(icon_waiting_);
 			menu_action_run_stop_->setText(tr("&Cancel Trigger Wait"));
@@ -1060,10 +1071,7 @@ void MainWindow::update_acq_button(Session *session)
 			menu_action_run_stop_->setText(tr("&Stop"));
 		}
 
-		const bool has_device = session && session->device() && session->device()->device();
-		const bool reconnect_needed = session && session->device_needs_reconnect();
-		const bool stopping = session && session->stop_requested();
-		menu_action_run_stop_->setEnabled(has_device && !reconnect_needed && !stopping);
+		menu_action_run_stop_->setEnabled(has_device && !reconnect_needed && !stopping && !device_busy);
 	}
 
 	update_menu_state();
@@ -1290,19 +1298,24 @@ void MainWindow::on_run_stop_for_session(Session *target_session)
 				{ return (s->get_capture_state() == Session::AwaitingTrigger) ||
 						(s->get_capture_state() == Session::Running); });
 
+		std::set<devices::Device*> started_devices;
 		for (shared_ptr<Session> s : hw_sessions) {
-			if (any_running)
+			if (any_running) {
 				s->request_stop_capture();
-			else if (!s->device_needs_reconnect() && !s->stop_requested())
+			} else if (!s->device_needs_reconnect() && !s->stop_requested() &&
+				!s->device()->is_busy_for(s.get()) &&
+				started_devices.insert(s->device().get()).second) {
 				s->start_capture([this](QString message) {Q_EMIT session_error_raised("Capture failed", message);});
+			}
 			if (s->main_bar())
-				s->main_bar()->update_run_stop_button();
+				s->main_bar()->set_capture_state(s->get_capture_state());
 		}
 		update_acq_button(last_focused_session_.get());
 	} else {
 		Session *session = target_session ? target_session : last_focused_session_.get();
 		if (!session || !session->device() || !session->device()->device() ||
-			session->device_needs_reconnect() || session->stop_requested())
+			session->device_needs_reconnect() || session->stop_requested() ||
+			session->device()->is_busy_for(session))
 			return;
 
 		switch (session->get_capture_state()) {
@@ -1374,7 +1387,26 @@ void MainWindow::on_focused_session_changed(shared_ptr<Session> session)
 
 void MainWindow::on_new_session_clicked()
 {
-	add_session();
+	shared_ptr<devices::HardwareDevice> prior_device;
+
+	if (shared_ptr<Session> current = active_session()) {
+		if (!current->device_needs_reconnect())
+			prior_device = dynamic_pointer_cast<devices::HardwareDevice>(current->device());
+	}
+
+	if (!prior_device) {
+		for (auto it = sessions_.rbegin(); it != sessions_.rend(); ++it) {
+			if (!(*it)->device_needs_reconnect()) {
+				prior_device = dynamic_pointer_cast<devices::HardwareDevice>((*it)->device());
+				if (prior_device)
+					break;
+			}
+		}
+	}
+
+	shared_ptr<Session> session = add_session();
+	if (prior_device)
+		session->select_device(prior_device);
 }
 
 void MainWindow::on_settings_clicked()
@@ -1496,12 +1528,21 @@ void MainWindow::on_session_capture_state_changed(int state)
 	Session *session = qobject_cast<Session*>(QObject::sender());
 	assert(session);
 
-	// Ignore if caller is not the currently focused session
-	// unless there is only one session
-	if ((sessions_.size() > 1) && (session != last_focused_session_.get()))
-		return;
+	// Refresh any other sessions sharing the same device so their Run/Busy
+	// button and hardware controls reflect device availability immediately.
+	const shared_ptr<devices::Device> dev = session->device();
+	if (dev) {
+		for (const shared_ptr<Session> &s : sessions_) {
+			if (s.get() != session && s->device() == dev && s->main_bar())
+				s->main_bar()->set_capture_state(s->get_capture_state());
+		}
+	}
 
-	update_acq_button(session);
+	if (sessions_.size() <= 1 || session == last_focused_session_.get()) {
+		update_acq_button(session);
+	} else if (last_focused_session_ && dev && last_focused_session_->device() == dev) {
+		update_acq_button(last_focused_session_.get());
+	}
 }
 
 void MainWindow::on_new_view(Session *session, int view_type)

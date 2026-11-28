@@ -429,10 +429,11 @@ void MainBar::update_device_list()
 void MainBar::set_capture_state(pv::Session::capture_state state)
 {
 	const bool stopped = (state == pv::Session::Stopped);
-	bool ui_enabled = stopped;
+	const bool device_busy = session_.device() && session_.device()->is_busy_for(&session_);
+	bool ui_enabled = stopped && !device_busy;
 
 	device_selector_.setEnabled(stopped);
-	action_reconnect_->setEnabled(stopped && session_.has_reconnect_target());
+	action_reconnect_->setEnabled(stopped && !device_busy && session_.has_reconnect_target());
 	ui_enabled = ui_enabled && !session_.device_needs_reconnect();
 	configure_button_.setEnabled(ui_enabled);
 	channels_button_.setEnabled(ui_enabled);
@@ -455,10 +456,17 @@ void MainBar::update_run_stop_button()
 	const bool has_device = session_.device() && session_.device()->device();
 	const bool reconnect_needed = session_.device_needs_reconnect();
 	const bool stopping = session_.stop_requested();
+	const bool device_busy = has_device && session_.device()->is_busy_for(&session_);
+	Session *busy_owner = device_busy ? session_.device()->capture_owner() : nullptr;
 
 	if (state == Session::Stopped) {
-		action_run_stop_->setIcon(file_device ? icon_reload_ : icon_play_);
-		action_run_stop_->setText(file_device ? tr(" Reload") : tr(" Run"));
+		if (device_busy) {
+			action_run_stop_->setIcon(icon_waiting_);
+			action_run_stop_->setText(tr(" Busy"));
+		} else {
+			action_run_stop_->setIcon(file_device ? icon_reload_ : icon_play_);
+			action_run_stop_->setText(file_device ? tr(" Reload") : tr(" Run"));
+		}
 	} else if (state == Session::AwaitingTrigger) {
 		action_run_stop_->setIcon(icon_waiting_);
 		action_run_stop_->setText(tr(" Waiting..."));
@@ -467,17 +475,20 @@ void MainBar::update_run_stop_button()
 		action_run_stop_->setText(tr(" Stop"));
 	}
 
-	const bool enabled = has_device && !reconnect_needed && !stopping;
+	const bool enabled = has_device && !reconnect_needed && !stopping && !device_busy;
 	action_run_stop_->setEnabled(enabled);
 	run_stop_button_->setEnabled(enabled);
 	const QString tip = !has_device ?
 		tr("No device connected. Select or connect a device first.") :
 		(reconnect_needed ?
 		tr("Device disconnected. Reconnect USB, then use Connect to Device, Scan, and select the analyzer again.") :
+		(device_busy ?
+		(busy_owner ? tr("Device is currently capturing in %1.").arg(busy_owner->name()) :
+			tr("Device is currently busy in another session.")) :
 		(stopping ? tr("Stopping acquisition...") :
 		(state == Session::AwaitingTrigger ? tr("Waiting for trigger — click to cancel (Space)") :
 		(state == Session::Running ? tr("Stop Acquisition (Space)") :
-		(file_device ? tr("Reload Capture File (Space)") : tr("Start Acquisition (Space)"))))));
+		(file_device ? tr("Reload Capture File (Space)") : tr("Start Acquisition (Space)")))))));
 	action_run_stop_->setToolTip(tip);
 	run_stop_button_->setToolTip(tip);
 }

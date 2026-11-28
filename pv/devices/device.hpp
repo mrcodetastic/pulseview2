@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <mutex>
 #include <string>
 
 using std::shared_ptr;
@@ -39,6 +40,7 @@ class Packet;
 namespace pv {
 
 class DeviceManager;
+class Session;
 
 namespace devices {
 
@@ -91,11 +93,21 @@ public:
 	virtual std::vector<std::string> frame_triggers() const { return {}; }
 	virtual bool frame_origin(uint64_t&) const { return false; }
 
+	bool try_acquire_capture(Session *owner);
+	void release_capture(Session *owner);
+	Session* capture_owner() const;
+	bool is_capturing() const;
+	bool is_busy_for(const Session *session) const;
+
 protected:
 	FeedCallback datafeed_callback_;
 	std::function<void(bool)> frame_callback_;
 	shared_ptr<sigrok::Session> session_;
 	shared_ptr<sigrok::Device> device_;
+
+private:
+	mutable std::mutex capture_owner_mutex_;
+	Session *capture_owner_ = nullptr;
 };
 
 } // namespace devices

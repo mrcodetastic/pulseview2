@@ -42,14 +42,17 @@ namespace devices {
 HardwareDevice::HardwareDevice(const shared_ptr<sigrok::Context> &context,
 	shared_ptr<sigrok::HardwareDevice> device) :
 	context_(context),
-	device_open_(false)
+	open_count_(0)
 {
 	device_ = device;
 }
 
 HardwareDevice::~HardwareDevice()
 {
-	close();
+	if (open_count_ > 0) {
+		open_count_ = 1;
+		close();
+	}
 }
 
 string HardwareDevice::full_name() const
@@ -113,8 +116,10 @@ string HardwareDevice::display_name(
 
 void HardwareDevice::open()
 {
-	if (device_open_)
-		close();
+	if (open_count_ > 0) {
+		++open_count_;
+		return;
+	}
 
 	try {
 		device_->open();
@@ -122,27 +127,35 @@ void HardwareDevice::open()
 		throw QString(e.what());
 	}
 
-	device_open_ = true;
-
 	// Set up the session
 	session_ = context_->create_session();
 	session_->add_device(device_);
+	open_count_ = 1;
 }
 
 void HardwareDevice::close()
 {
-	if (device_open_)
-		device_->close();
+	if (open_count_ == 0)
+		return;
 
-	if (session_)
+	if (open_count_ > 1) {
+		--open_count_;
+		return;
+	}
+
+	device_->close();
+
+	if (session_) {
 		session_->remove_devices();
+		session_.reset();
+	}
 
-	device_open_ = false;
+	open_count_ = 0;
 }
 
 bool HardwareDevice::is_open() const
 {
-	return device_open_;
+	return open_count_ > 0;
 }
 
 } // namespace devices

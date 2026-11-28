@@ -145,7 +145,8 @@ Session::~Session()
 
 	// Stop and join to the thread
 	stop_capture();
-	if (device_) device_->disconnect_datafeed();
+	if (device_ && !device_->is_busy_for(this))
+		device_->disconnect_datafeed();
 
 	// Release the device. The DeviceManager keeps the device object alive,
 	// so it would otherwise stay open after the session is gone; serial
@@ -672,7 +673,8 @@ void Session::set_device(shared_ptr<devices::Device> device)
 	stop_capture();
 
 	if (device_) {
-		device_->disconnect_datafeed();
+		if (!device_->is_busy_for(this))
+			device_->disconnect_datafeed();
 		device_->close();
 	}
 
@@ -738,7 +740,6 @@ void Session::set_device(shared_ptr<devices::Device> device)
 			// Device may not expose SAMPLERATE before capture starts.
 		}
 
-		attach_device_callbacks();
 		update_signals();
 
 		if (auto hw = dynamic_pointer_cast<devices::HardwareDevice>(device_)) {
@@ -829,7 +830,6 @@ bool Session::rebind_reconnected_device(shared_ptr<devices::HardwareDevice> foun
 
 				device_ = found;
 				device_reconnect_needed_ = false;
-				attach_device_callbacks();
 
 				const RecentDevice rec = device_manager_.make_recent_device(found);
 				if (rec.is_valid()) {
@@ -941,6 +941,15 @@ bool Session::reconnect_last_device(QString *error_out)
 
 	// Close and release the stale handle so driver_scan() does not preserve it
 	if (device_) {
+		if (device_->is_busy_for(this)) {
+			if (error_out) {
+				Session *owner = device_->capture_owner();
+				*error_out = owner ?
+					tr("Cannot reconnect while the device is capturing in %1.").arg(owner->name()) :
+					tr("Cannot reconnect while the device is capturing in another session.");
+			}
+			return false;
+		}
 		try {
 			device_->disconnect_datafeed();
 			device_->close();
@@ -1253,6 +1262,15 @@ void Session::start_capture(function<void (const QString)> error_handler)
 	}
 
 
+	if (!device_->try_acquire_capture(this)) {
+		Session *owner = device_->capture_owner();
+		error_handler(owner ?
+			tr("Device is currently capturing in %1.").arg(owner->name()) :
+			tr("Device is currently busy in another session."));
+		return;
+	}
+	attach_device_callbacks();
+
 	const auto previous_start_time = acq_start_time_;
 	acq_start_time_ = Glib::DateTime::create_now_local();
 
@@ -1265,6 +1283,8 @@ void Session::start_capture(function<void (const QString)> error_handler)
 		sampling_thread_ = std::thread(&Session::sample_thread_proc, this, error_handler);
 	} catch (const std::exception& error) {
 		acq_start_time_ = previous_start_time;
+		device_->disconnect_datafeed();
+		device_->release_capture(this);
 		set_capture_state(Stopped);
 		error_handler(QString::fromUtf8(error.what()));
 		return;
@@ -1373,7 +1393,8 @@ void Session::request_stop_capture()
 		stop_requested_ = true;
 	}
 	try {
-		device_->stop();
+		if (device_ && device_->capture_owner() == this)
+			device_->stop();
 	} catch (...) {
 		// Keep the request latched if start is still in progress. The worker
 		// checks it again after start and before every subsequent acquisition.
@@ -1914,6 +1935,10 @@ try
 			capture_outcome_ = "stopped";
 		}
 	}
+	if (device_) {
+		device_->disconnect_datafeed();
+		device_->release_capture(this);
+	}
 	set_capture_state(Stopped);
 
 	// Confirm that SR_DF_END was received
@@ -1959,6 +1984,10 @@ catch (const std::exception &error)
 	if (frame_began_) feed_in_frame_end();
 	if (cur_logic_segment_ || !cur_analog_segments_.empty()) record_segment_outcome();
 	series_frame_ = false;
+	if (device_) {
+		device_->disconnect_datafeed();
+		device_->release_capture(this);
+	}
 	set_capture_state(Stopped);
 	error_handler(problem);
 }
