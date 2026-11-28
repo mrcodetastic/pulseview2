@@ -322,6 +322,7 @@ set(pulseview_SOURCES
 	pv/triggersettings.cpp
 	pv/triggersequence.cpp
 	pv/storesession.cpp
+	pv/workspace.cpp
 	pv/iconhelper.cpp
 	pv/util.cpp
 	pv/binding/binding.cpp

@@ -104,11 +104,8 @@ public:
 	QAction* action_run_stop() const;
 	QAction* action_new_view() const;
 	QAction* action_open() const;
-	QAction* action_save() const;
 	QAction* action_save_as() const;
 	QAction* action_save_selection_as() const;
-	QAction* action_restore_setup() const;
-	QAction* action_save_setup() const;
 	QAction* action_connect() const;
 	QAction* action_reconnect() const;
 
@@ -159,12 +156,8 @@ private Q_SLOTS:
 	void on_actionNewView_triggered(QAction* action = nullptr);
 
 	void on_actionOpen_triggered();
-	void on_actionSave_triggered();
 	void on_actionSaveAs_triggered();
 	void on_actionSaveSelectionAs_triggered();
-
-	void on_actionSaveSetup_triggered();
-	void on_actionRestoreSetup_triggered();
 
 	void on_actionConnect_triggered();
 	void on_actionReconnect_triggered();
@@ -187,11 +180,8 @@ private:
 	QAction *const action_run_stop_;
 	QAction *const action_new_view_;
 	QAction *const action_open_;
-	QAction *const action_save_;
 	QAction *const action_save_as_;
 	QAction *const action_save_selection_as_;
-	QAction *const action_restore_setup_;
-	QAction *const action_save_setup_;
 	QAction *const action_connect_;
 	QAction *const action_reconnect_;
 

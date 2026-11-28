@@ -253,16 +253,7 @@ bool StoreSession::start_single(bool async, const std::atomic<bool> *external_in
 		return false;
 	}
 
-	// Save session setup if we're saving to srzip and the user wants it
-	GlobalSettings settings;
-	bool save_with_setup = settings.value(GlobalSettings::Key_General_SaveWithSetup).toBool();
-
-	if ((output_format_->name() == "srzip") && save_with_setup && save_setup_) {
-		const QString setup_file_name = util::setup_file_path(QString::fromStdString(file_name_));
-
-		QSettings settings_storage(setup_file_name, QSettings::IniFormat);
-		session_.save_setup(settings_storage);
-	}
+	(void)save_setup_;
 
 	return true;
 }

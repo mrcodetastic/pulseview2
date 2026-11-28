@@ -30,6 +30,7 @@ set(pulseview_TEST_SOURCES
 	${PROJECT_SOURCE_DIR}/pv/triggersettings.cpp
 	${PROJECT_SOURCE_DIR}/pv/triggersequence.cpp
 	${PROJECT_SOURCE_DIR}/pv/storesession.cpp
+	${PROJECT_SOURCE_DIR}/pv/workspace.cpp
 	${PROJECT_SOURCE_DIR}/pv/iconhelper.cpp
 	${PROJECT_SOURCE_DIR}/pv/util.cpp
 	${PROJECT_SOURCE_DIR}/pv/binding/binding.cpp

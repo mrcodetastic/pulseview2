@@ -99,11 +99,8 @@ MainBar::MainBar(Session &session, QWidget *parent, pv::views::trace::View *view
 	action_run_stop_(new QAction(this)),
 	action_new_view_(new QAction(this)),
 	action_open_(new QAction(this)),
-	action_save_(new QAction(this)),
 	action_save_as_(new QAction(this)),
 	action_save_selection_as_(new QAction(this)),
-	action_restore_setup_(new QAction(this)),
-	action_save_setup_(new QAction(this)),
 	action_connect_(new QAction(this)),
 	action_reconnect_(new QAction(this)),
 	view_toolbar_(new QToolBar(tr("View & File Toolbar"), this)),
@@ -179,51 +176,34 @@ MainBar::MainBar(Session &session, QWidget *parent, pv::views::trace::View *view
 	connect(action_new_view_, SIGNAL(triggered(bool)),
 		this, SLOT(on_actionNewView_triggered()));
 
-	action_open_->setText(tr("&Open Capture..."));
+	action_open_->setText(tr("&Open Capture Data..."));
 	action_open_->setIcon(QIcon::fromTheme("document-open",
 		QIcon(":/icons/document-open.png")));
-	action_open_->setToolTip(tr("Open Sigrok Capture (.sr) (Ctrl+O)"));
-	action_open_->setStatusTip(tr("Open a saved PulseView / sigrok session file (.sr)"));
+	action_open_->setToolTip(tr("Open Capture Data (.sr) (Ctrl+O)"));
+	action_open_->setStatusTip(tr("Open a saved sigrok capture data file (.sr)"));
 	action_open_->setShortcut(QKeySequence::Open);
 	action_open_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 	connect(action_open_, SIGNAL(triggered(bool)),
 		this, SLOT(on_actionOpen_triggered()));
 
-	action_restore_setup_->setText(tr("Restore Session Setu&p..."));
-	action_restore_setup_->setStatusTip(tr("Restore channel names, decoders, and view layout from a .pvs file"));
-	connect(action_restore_setup_, SIGNAL(triggered(bool)),
-		this, SLOT(on_actionRestoreSetup_triggered()));
-
-	action_save_->setText(tr("&Save..."));
-	action_save_->setIcon(QIcon::fromTheme("document-save-as",
-		QIcon(":/icons/document-save-as.png")));
-	action_save_->setToolTip(tr("Save Capture (.sr) (Ctrl+S)"));
-	action_save_->setStatusTip(tr("Save the current capture as a sigrok session file (.sr)"));
-	action_save_->setShortcut(QKeySequence::Save);
-	action_save_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-	connect(action_save_, SIGNAL(triggered(bool)),
-		this, SLOT(on_actionSave_triggered()));
-
-	action_save_as_->setText(tr("Save &As..."));
+	action_save_as_->setText(tr("&Save Capture Data..."));
 	action_save_as_->setIcon(QIcon::fromTheme("document-save-as",
 		QIcon(":/icons/document-save-as.png")));
-	action_save_as_->setStatusTip(tr("Save the current capture to a new .sr file"));
+	action_save_as_->setToolTip(tr("Save Capture Data (.sr) (Ctrl+S)"));
+	action_save_as_->setStatusTip(tr("Save the current capture data as a .sr file"));
+	action_save_as_->setShortcut(QKeySequence::Save);
+	action_save_as_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 	connect(action_save_as_, SIGNAL(triggered(bool)),
 		this, SLOT(on_actionSaveAs_triggered()));
 
-	action_save_selection_as_->setText(tr("Save Selected &Range As..."));
+	action_save_selection_as_->setText(tr("Save Selected Capture &Data..."));
 	action_save_selection_as_->setIcon(QIcon::fromTheme("document-save-as",
 		QIcon(":/icons/document-save-as.png")));
-	action_save_selection_as_->setStatusTip(tr("Save only the range between measurement cursors"));
+	action_save_selection_as_->setStatusTip(tr("Save only the capture data between measurement cursors"));
 	action_save_selection_as_->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
 	action_save_selection_as_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 	connect(action_save_selection_as_, SIGNAL(triggered(bool)),
 		this, SLOT(on_actionSaveSelectionAs_triggered()));
-
-	action_save_setup_->setText(tr("Save Session Setu&p..."));
-	action_save_setup_->setStatusTip(tr("Save channel names, decoders, and view layout to a .pvs file"));
-	connect(action_save_setup_, SIGNAL(triggered(bool)),
-		this, SLOT(on_actionSaveSetup_triggered()));
 
 	action_connect_->setText(tr("&Connect to Device..."));
 	action_connect_->setStatusTip(tr("Scan for and connect to a hardware logic analyzer or oscilloscope"));
@@ -253,18 +233,17 @@ MainBar::MainBar(Session &session, QWidget *parent, pv::views::trace::View *view
 	new_view_button_->setDefaultAction(action_new_view_);
 	new_view_button_->setPopupMode(QToolButton::MenuButtonPopup);
 
-	// Open button: single-click native Open Capture (third-party formats live in File -> Import)
+	// Open button: single-click native Open Capture Data (third-party formats live in File -> Import)
 	open_button_->setDefaultAction(action_open_);
 
-	// Save button: native Save / Save As / Save Selected Range (third-party formats live in File -> Export)
+	// Save button: Save Capture Data / Save Selected Capture Data (third-party formats live in File -> Export)
 	QMenu *save_menu = new QMenu(this);
-	save_menu->addAction(action_save_);
 	save_menu->addAction(action_save_as_);
 	save_menu->addAction(action_save_selection_as_);
-	save_menu->setDefaultAction(action_save_);
+	save_menu->setDefaultAction(action_save_as_);
 
 	save_button_->setMenu(save_menu);
-	save_button_->setDefaultAction(action_save_);
+	save_button_->setDefaultAction(action_save_as_);
 	save_button_->setPopupMode(QToolButton::MenuButtonPopup);
 
 	// Device selector menu
@@ -525,11 +504,6 @@ QAction* MainBar::action_open() const
 	return action_open_;
 }
 
-QAction* MainBar::action_save() const
-{
-	return action_save_;
-}
-
 QAction* MainBar::action_save_as() const
 {
 	return action_save_as_;
@@ -538,16 +512,6 @@ QAction* MainBar::action_save_as() const
 QAction* MainBar::action_save_selection_as() const
 {
 	return action_save_selection_as_;
-}
-
-QAction* MainBar::action_restore_setup() const
-{
-	return action_restore_setup_;
-}
-
-QAction* MainBar::action_save_setup() const
-{
-	return action_save_setup_;
 }
 
 QAction* MainBar::action_connect() const
@@ -1213,10 +1177,10 @@ void MainBar::on_actionOpen_triggered()
 	QSettings settings;
 	const QString dir = settings.value(SettingOpenDirectory).toString();
 
-	// Show the dialog
+	// Show the dialog (.srcollection support is kept dormant in CaptureCollection)
 	const QString file_name = QFileDialog::getOpenFileName(
-		this, tr("Open File"), dir, tr(
-			"sigrok Sessions and PulseView collections (*.sr *.srcollection);;"
+		this, tr("Open Capture Data"), dir, tr(
+			"sigrok Capture Data (*.sr);;"
 			"All Files (*)"));
 
 	if (!file_name.isEmpty()) {
@@ -1227,19 +1191,6 @@ void MainBar::on_actionOpen_triggered()
 	}
 }
 
-void MainBar::on_actionSave_triggered()
-{
-	// A path is only set if we loaded/saved an srzip file before
-	if (session_.save_path().isEmpty()) {
-		on_actionSaveAs_triggered();
-		return;
-	}
-
-	QFileInfo fi = QFileInfo(QDir(session_.save_path()), session_.name());
-	export_file(session_.device_manager().context()->output_formats()["srzip"], false,
-		fi.absoluteFilePath());
-}
-
 void MainBar::on_actionSaveAs_triggered()
 {
 	export_file(session_.device_manager().context()->output_formats()["srzip"]);
@@ -1248,41 +1199,6 @@ void MainBar::on_actionSaveAs_triggered()
 void MainBar::on_actionSaveSelectionAs_triggered()
 {
 	export_file(session_.device_manager().context()->output_formats()["srzip"], true);
-}
-
-void MainBar::on_actionSaveSetup_triggered()
-{
-	QSettings settings;
-	const QString dir = settings.value(SettingSaveDirectory).toString();
-
-	const QString file_name = QFileDialog::getSaveFileName(
-		this, tr("Save File"), dir, tr(
-				"PulseView Session Setups (*.pvs);;"
-				"All Files (*)"));
-
-	if (file_name.isEmpty())
-		return;
-
-	QSettings settings_storage(file_name, QSettings::IniFormat);
-	settings_storage.clear();
-	session_.save_setup(settings_storage);
-}
-
-void MainBar::on_actionRestoreSetup_triggered()
-{
-	QSettings settings;
-	const QString dir = settings.value(SettingSaveDirectory).toString();
-
-	const QString file_name = QFileDialog::getOpenFileName(
-		this, tr("Open File"), dir, tr(
-				"PulseView Session Setups (*.pvs);;"
-				"All Files (*)"));
-
-	if (file_name.isEmpty())
-		return;
-
-	QSettings settings_storage(file_name, QSettings::IniFormat);
-	session_.restore_setup(settings_storage);
 }
 
 void MainBar::on_actionConnect_triggered()

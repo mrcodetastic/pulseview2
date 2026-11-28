@@ -1157,12 +1157,8 @@ void Session::load_file(QString file_name, QString setup_file_name,
 	if (!device_)
 		return;
 
-	// Use the input file with .pvs extension if no setup file was given
-	if (setup_file_name.isEmpty()) {
-		setup_file_name = util::setup_file_path(file_name);
-	}
-
-	if (QFileInfo::exists(setup_file_name) && QFileInfo(setup_file_name).isReadable()) {
+	if (!setup_file_name.isEmpty() &&
+		QFileInfo::exists(setup_file_name) && QFileInfo(setup_file_name).isReadable()) {
 		QSettings settings_storage(setup_file_name, QSettings::IniFormat);
 		restore_setup(settings_storage);
 	}

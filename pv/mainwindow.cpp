@@ -47,8 +47,14 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QStatusBar>
+#include <QCheckBox>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QLineEdit>
 #include <QStyle>
 #include <QTableWidget>
+#include <QTemporaryDir>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -68,6 +74,7 @@
 #include "views/trace/standardbar.hpp"
 #include "widgets/exportmenu.hpp"
 #include "widgets/importmenu.hpp"
+#include "workspace.hpp"
 
 #ifdef ENABLE_DECODE
 #include "subwindows/decoder_selector/subwindow.hpp"
@@ -96,12 +103,12 @@ MainWindow::MainWindow(DeviceManager &device_manager, QWidget *parent) :
 	icon_stop_(pv::themed_icon(":/icons/ui/stop.svg", QColor("#dc2626"))),
 	icon_waiting_(pv::themed_icon(":/icons/ui/stop.svg", QColor("#d97706"))),
 	icon_reload_(pv::themed_icon(":/icons/ui/reload.svg", QColor("#2563eb"))),
+	menu_action_open_workspace_(nullptr),
+	menu_action_save_workspace_(nullptr),
+	menu_action_save_current_session_(nullptr),
 	menu_action_open_(nullptr),
-	menu_action_save_(nullptr),
 	menu_action_save_as_(nullptr),
 	menu_action_save_selection_as_(nullptr),
-	menu_action_restore_setup_(nullptr),
-	menu_action_save_setup_(nullptr),
 	menu_import_(nullptr),
 	menu_export_(nullptr),
 	menu_action_run_stop_(nullptr),
@@ -657,49 +664,63 @@ void MainWindow::setup_menu_bar()
 	QMenu *const file_menu = bar->addMenu(tr("&File"));
 
 	QAction *const act_new_session = file_menu->addAction(
-		QIcon::fromTheme("document-new", QIcon(":/icons/document-new.png")), tr("&New Session"));
+		QIcon::fromTheme("document-new", QIcon(":/icons/document-new.png")), tr("&New Capture Session"));
 	act_new_session->setShortcut(QKeySequence::New);
 	act_new_session->setStatusTip(tr("Open a new capture session tab"));
 	connect(act_new_session, &QAction::triggered, this, &MainWindow::on_new_session_clicked);
 
+	QAction *const act_close_tab = file_menu->addAction(tr("&Close Capture Session"));
+	act_close_tab->setShortcut(QKeySequence::Close);
+	act_close_tab->setStatusTip(tr("Close the current capture session tab"));
+	connect(act_close_tab, &QAction::triggered, this, &MainWindow::on_close_current_tab);
+
+	file_menu->addSeparator();
+
+	menu_action_open_workspace_ = file_menu->addAction(
+		QIcon::fromTheme("document-open", QIcon(":/icons/document-open.png")), tr("Open &Workspace..."));
+	menu_action_open_workspace_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+	menu_action_open_workspace_->setStatusTip(tr("Open a PulseView2 workspace or session file (.pv2)"));
+	connect(menu_action_open_workspace_, &QAction::triggered, this, &MainWindow::on_open_workspace);
+
+	menu_action_save_workspace_ = file_menu->addAction(
+		QIcon::fromTheme("document-save-as", QIcon(":/icons/document-save-as.png")), tr("Save &Workspace..."));
+	menu_action_save_workspace_->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
+	menu_action_save_workspace_->setStatusTip(tr("Save all open sessions to a PulseView2 workspace file (.pv2)"));
+	connect(menu_action_save_workspace_, &QAction::triggered, this, &MainWindow::on_save_workspace);
+
+	menu_action_save_current_session_ = file_menu->addAction(
+		QIcon::fromTheme("document-save-as", QIcon(":/icons/document-save-as.png")), tr("Save Current Workspace S&ession..."));
+	menu_action_save_current_session_->setStatusTip(tr("Save the current session tab to a PulseView2 file (.pv2)"));
+	connect(menu_action_save_current_session_, &QAction::triggered, this, &MainWindow::on_save_current_session);
+
+	file_menu->addSeparator();
+
 	menu_action_open_ = file_menu->addAction(
-		QIcon::fromTheme("document-open", QIcon(":/icons/document-open.png")), tr("&Open Capture..."));
+		QIcon::fromTheme("document-open", QIcon(":/icons/document-open.png")), tr("&Open Capture Data..."));
 	set_menu_hint_shortcut(menu_action_open_, QKeySequence::Open);
-	menu_action_open_->setStatusTip(tr("Open a saved PulseView / sigrok session file (.sr)"));
+	menu_action_open_->setStatusTip(tr("Open a saved sigrok capture data file (.sr)"));
 	connect(menu_action_open_, &QAction::triggered, this, [this] {
 		if (auto mb = active_main_bar())
 			mb->action_open()->trigger();
 	});
 
-	file_menu->addSeparator();
-
-	menu_action_save_ = file_menu->addAction(
-		QIcon::fromTheme("document-save-as", QIcon(":/icons/document-save-as.png")), tr("&Save"));
-	set_menu_hint_shortcut(menu_action_save_, QKeySequence::Save);
-	menu_action_save_->setStatusTip(tr("Save the current capture as a .sr file"));
-	connect(menu_action_save_, &QAction::triggered, this, [this] {
-		if (auto mb = active_main_bar())
-			mb->action_save()->trigger();
-	});
-
 	menu_action_save_as_ = file_menu->addAction(
-		QIcon::fromTheme("document-save-as", QIcon(":/icons/document-save-as.png")), tr("Save &As..."));
-	menu_action_save_as_->setStatusTip(tr("Save the current capture to a new .sr file"));
+		QIcon::fromTheme("document-save-as", QIcon(":/icons/document-save-as.png")), tr("&Save Capture Data..."));
+	set_menu_hint_shortcut(menu_action_save_as_, QKeySequence::Save);
+	menu_action_save_as_->setStatusTip(tr("Save the current capture data as a .sr file"));
 	connect(menu_action_save_as_, &QAction::triggered, this, [this] {
 		if (auto mb = active_main_bar())
 			mb->action_save_as()->trigger();
 	});
 
 	menu_action_save_selection_as_ = file_menu->addAction(
-		QIcon::fromTheme("document-save-as", QIcon(":/icons/document-save-as.png")), tr("Save Selected &Range As..."));
+		QIcon::fromTheme("document-save-as", QIcon(":/icons/document-save-as.png")), tr("Save Selected Capture &Data..."));
 	set_menu_hint_shortcut(menu_action_save_selection_as_, QKeySequence(Qt::CTRL | Qt::Key_R));
-	menu_action_save_selection_as_->setStatusTip(tr("Save only the range between measurement cursors"));
+	menu_action_save_selection_as_->setStatusTip(tr("Save only the capture data between measurement cursors"));
 	connect(menu_action_save_selection_as_, &QAction::triggered, this, [this] {
 		if (auto mb = active_main_bar())
 			mb->action_save_selection_as()->trigger();
 	});
-
-	file_menu->addSeparator();
 
 	widgets::ImportMenu *const import_submenu = new widgets::ImportMenu(
 		file_menu, device_manager_.context());
@@ -726,28 +747,6 @@ void MainWindow::setup_menu_bar()
 	file_menu->addMenu(menu_export_);
 
 	file_menu->addSeparator();
-
-	QMenu *const setup_menu = file_menu->addMenu(tr("Session Setu&p"));
-	menu_action_restore_setup_ = setup_menu->addAction(tr("&Restore Session Setup..."));
-	menu_action_restore_setup_->setStatusTip(tr("Load channel names, decoders, and layout from a .pvs file"));
-	connect(menu_action_restore_setup_, &QAction::triggered, this, [this] {
-		if (auto mb = active_main_bar())
-			mb->action_restore_setup()->trigger();
-	});
-
-	menu_action_save_setup_ = setup_menu->addAction(tr("&Save Session Setup..."));
-	menu_action_save_setup_->setStatusTip(tr("Save channel names, decoders, and layout to a .pvs file"));
-	connect(menu_action_save_setup_, &QAction::triggered, this, [this] {
-		if (auto mb = active_main_bar())
-			mb->action_save_setup()->trigger();
-	});
-
-	file_menu->addSeparator();
-
-	QAction *const act_close_tab = file_menu->addAction(tr("&Close Session"));
-	act_close_tab->setShortcut(QKeySequence::Close);
-	act_close_tab->setStatusTip(tr("Close the current session tab"));
-	connect(act_close_tab, &QAction::triggered, this, &MainWindow::on_close_current_tab);
 
 	QAction *const act_quit = file_menu->addAction(
 		QIcon::fromTheme("application-exit", QIcon(":/icons/application-exit.png")), tr("&Quit"));
@@ -1086,12 +1085,11 @@ void MainWindow::update_menu_state()
 	const bool stopped = s && (s->get_capture_state() == Session::Stopped);
 	const bool hw_ready = stopped && !s->device_needs_reconnect();
 
+	if (menu_action_save_workspace_) menu_action_save_workspace_->setEnabled(!sessions_.empty());
+	if (menu_action_save_current_session_) menu_action_save_current_session_->setEnabled(has_session);
 	if (menu_action_open_) menu_action_open_->setEnabled(has_session);
-	if (menu_action_save_) menu_action_save_->setEnabled(has_session);
 	if (menu_action_save_as_) menu_action_save_as_->setEnabled(has_session);
 	if (menu_action_save_selection_as_) menu_action_save_selection_as_->setEnabled(has_session);
-	if (menu_action_restore_setup_) menu_action_restore_setup_->setEnabled(has_session);
-	if (menu_action_save_setup_) menu_action_save_setup_->setEnabled(has_session);
 	if (menu_import_) menu_import_->setEnabled(has_session);
 	if (menu_export_) menu_export_->setEnabled(has_session);
 
@@ -1437,10 +1435,12 @@ void MainWindow::on_help_shortcuts_triggered()
 		{tr("Space"), tr("Start / Stop acquisition (or reload file)")},
 		{tr("Ctrl+Shift+R"), tr("Reconnect to last used hardware device")},
 		{tr("Ctrl+N"), tr("New capture session tab")},
-		{tr("Ctrl+O"), tr("Open sigrok capture (.sr)")},
-		{tr("Ctrl+S"), tr("Save capture (.sr)")},
-		{tr("Ctrl+R"), tr("Save selected cursor range as .sr")},
-		{tr("Ctrl+W"), tr("Close current session tab")},
+		{tr("Ctrl+Shift+O"), tr("Open PulseView2 workspace / session (.pv2)")},
+		{tr("Ctrl+Shift+S"), tr("Save PulseView2 workspace (.pv2)")},
+		{tr("Ctrl+O"), tr("Open capture data (.sr)")},
+		{tr("Ctrl+S"), tr("Save capture data (.sr)")},
+		{tr("Ctrl+R"), tr("Save selected capture data (.sr)")},
+		{tr("Ctrl+F4 / Ctrl+W"), tr("Close current capture session tab")},
 		{tr("Ctrl+Q"), tr("Quit PulseView2")},
 		{tr("Mouse Wheel / + / -"), tr("Zoom in / out on time axis")},
 		{tr("Shift + Wheel / Drag"), tr("Pan horizontally along time axis")},
@@ -1755,6 +1755,207 @@ void MainWindow::on_session_error_raised(const QString text, const QString info_
 			update_acq_button(session);
 		}
 	}
+}
+
+void MainWindow::save_workspace_dialog(bool full_workspace)
+{
+	std::vector<shared_ptr<Session>> target_sessions;
+	int active_idx = 0;
+
+	if (full_workspace) {
+		int idx = 0;
+		const shared_ptr<Session> current = active_session();
+		for (const shared_ptr<Session> &s : sessions_) {
+			if (s == current)
+				active_idx = idx;
+			target_sessions.push_back(s);
+			++idx;
+		}
+	} else {
+		if (shared_ptr<Session> current = active_session())
+			target_sessions.push_back(current);
+	}
+
+	if (target_sessions.empty())
+		return;
+
+	int sessions_with_data = 0;
+	for (const shared_ptr<Session> &s : target_sessions) {
+		if (s->captured_segment_count() > 0)
+			++sessions_with_data;
+	}
+
+	QSettings settings;
+	const QString last_dir = settings.value("MainWindow/WorkspaceDirectory",
+		settings.value("MainWindow/SaveDirectory")).toString();
+	const QString default_name = full_workspace ?
+		QString("workspace.pv2") :
+		QString("%1.pv2").arg(target_sessions.front()->name().simplified().replace(' ', '_'));
+	const QString initial_path = last_dir.isEmpty() ?
+		default_name : QDir(last_dir).filePath(default_name);
+
+	QDialog dlg(this);
+	dlg.setWindowTitle(full_workspace ?
+		tr("Save Workspace") : tr("Save Current Workspace Session"));
+	dlg.setMinimumWidth(460);
+
+	QVBoxLayout *layout = new QVBoxLayout(&dlg);
+
+	QHBoxLayout *path_row = new QHBoxLayout();
+	QLineEdit *path_edit = new QLineEdit(initial_path, &dlg);
+	QPushButton *browse_btn = new QPushButton(tr("Browse..."), &dlg);
+	path_row->addWidget(new QLabel(tr("File:"), &dlg));
+	path_row->addWidget(path_edit, 1);
+	path_row->addWidget(browse_btn);
+	layout->addLayout(path_row);
+
+	QCheckBox *include_data_cb = new QCheckBox(tr("Include capture data"), &dlg);
+	include_data_cb->setChecked(true);
+	if (sessions_with_data == 0) {
+		include_data_cb->setChecked(false);
+		include_data_cb->setEnabled(false);
+		include_data_cb->setToolTip(tr("No captured waveform data is currently present."));
+	}
+	layout->addWidget(include_data_cb);
+
+	QLabel *summary = new QLabel(
+		tr("Saving %1 session(s) (%2 with capture data).")
+			.arg(target_sessions.size()).arg(sessions_with_data), &dlg);
+	summary->setEnabled(false);
+	layout->addWidget(summary);
+
+	QDialogButtonBox *buttons = new QDialogButtonBox(
+		QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
+	layout->addWidget(buttons);
+
+	connect(browse_btn, &QPushButton::clicked, &dlg, [&] {
+		const QString chosen = QFileDialog::getSaveFileName(
+			&dlg, dlg.windowTitle(), path_edit->text(),
+			tr("PulseView2 Workspace (*.pv2);;All Files (*)"));
+		if (!chosen.isEmpty()) {
+			QString out = chosen;
+			if (!out.endsWith(".pv2", Qt::CaseInsensitive))
+				out += ".pv2";
+			path_edit->setText(out);
+		}
+	});
+	connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+	if (dlg.exec() != QDialog::Accepted)
+		return;
+
+	QString file_path = path_edit->text().trimmed();
+	if (file_path.isEmpty())
+		return;
+	if (!file_path.endsWith(".pv2", Qt::CaseInsensitive))
+		file_path += ".pv2";
+
+	QApplication::setOverrideCursor(Qt::WaitCursor);
+	QString error;
+	const bool ok = workspace::save_workspace(
+		file_path, device_manager_, target_sessions, active_idx,
+		include_data_cb->isChecked(), full_workspace, &error);
+	QApplication::restoreOverrideCursor();
+
+	if (!ok) {
+		QMessageBox::critical(this, tr("Save Workspace Failed"),
+			error.isEmpty() ? tr("Failed to save workspace file.") : error);
+		return;
+	}
+
+	settings.setValue("MainWindow/WorkspaceDirectory", QFileInfo(file_path).absolutePath());
+	statusBar()->showMessage(tr("Saved workspace to %1").arg(QFileInfo(file_path).fileName()), 5000);
+}
+
+void MainWindow::on_save_workspace()
+{
+	save_workspace_dialog(true);
+}
+
+void MainWindow::on_save_current_session()
+{
+	save_workspace_dialog(false);
+}
+
+void MainWindow::on_open_workspace()
+{
+	QSettings settings;
+	const QString last_dir = settings.value("MainWindow/WorkspaceDirectory",
+		settings.value("MainWindow/OpenDirectory")).toString();
+
+	const QString file_path = QFileDialog::getOpenFileName(
+		this, tr("Open Workspace"), last_dir,
+		tr("PulseView2 Workspace (*.pv2);;All Files (*)"));
+	if (file_path.isEmpty())
+		return;
+
+	QApplication::setOverrideCursor(Qt::WaitCursor);
+	WorkspaceData data;
+	QString error;
+	const bool ok = workspace::load_workspace(file_path, data, &error);
+	QApplication::restoreOverrideCursor();
+
+	if (!ok) {
+		QMessageBox::critical(this, tr("Open Workspace Failed"),
+			error.isEmpty() ? tr("Failed to open workspace file.") : error);
+		return;
+	}
+
+	settings.setValue("MainWindow/WorkspaceDirectory", QFileInfo(file_path).absolutePath());
+
+	if (data.temp_dir)
+		workspace_temp_dirs_.push_back(data.temp_dir);
+
+	if (data.is_full_workspace) {
+		std::vector<shared_ptr<Session>> existing(sessions_.begin(), sessions_.end());
+		for (const shared_ptr<Session> &s : existing)
+			remove_session(s);
+	}
+
+	std::vector<shared_ptr<Session>> created;
+	for (const WorkspaceSessionData &sdata : data.sessions) {
+		shared_ptr<Session> session = add_session();
+		created.push_back(session);
+
+		if (!sdata.capture_file_path.isEmpty()) {
+			session->load_file(sdata.capture_file_path);
+			workspace::apply_session_setup(*session, sdata.setup);
+			if (!sdata.name.isEmpty())
+				session->set_name(sdata.name);
+		} else {
+			if (sdata.device_type == "hardware") {
+				map<string, string> dev_info;
+				if (!sdata.vendor.isEmpty()) dev_info["vendor"] = sdata.vendor.toStdString();
+				if (!sdata.model.isEmpty()) dev_info["model"] = sdata.model.toStdString();
+				if (!sdata.version.isEmpty()) dev_info["version"] = sdata.version.toStdString();
+				if (!sdata.serial_num.isEmpty()) dev_info["serial_num"] = sdata.serial_num.toStdString();
+				if (!sdata.connection_id.isEmpty()) dev_info["connection_id"] = sdata.connection_id.toStdString();
+
+				if (auto hw = device_manager_.find_device_from_info(dev_info)) {
+					session->select_device(hw);
+					workspace::apply_device_config(*hw, sdata);
+					if (auto mb = session->main_bar())
+						mb->update_device_list();
+				}
+			}
+			workspace::apply_session_setup(*session, sdata.setup);
+			if (!sdata.name.isEmpty())
+				session->set_name(sdata.name);
+		}
+	}
+
+	if (!created.empty()) {
+		int target_idx = data.active_session_index;
+		if (target_idx < 0 || target_idx >= static_cast<int>(created.size()))
+			target_idx = 0;
+		shared_ptr<Session> active = created[static_cast<size_t>(target_idx)];
+		if (session_windows_.count(active))
+			session_selector_.setCurrentWidget(session_windows_.at(active));
+		on_focused_session_changed(active);
+	}
+
+	statusBar()->showMessage(tr("Opened workspace %1").arg(QFileInfo(file_path).fileName()), 5000);
 }
 
 } // namespace pv

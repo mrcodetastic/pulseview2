@@ -23,6 +23,7 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <vector>
 
 #include <QMainWindow>
 #include <QShortcut>
@@ -42,6 +43,7 @@ struct srd_decoder;
 class QAction;
 class QLabel;
 class QMenu;
+class QTemporaryDir;
 class QVBoxLayout;
 
 namespace pv {
@@ -165,11 +167,18 @@ private Q_SLOTS:
 
 	void on_close_current_tab();
 
+	void on_open_workspace();
+	void on_save_workspace();
+	void on_save_current_session();
+
 private:
+	void save_workspace_dialog(bool full_workspace);
+
 	DeviceManager &device_manager_;
 
 	list< shared_ptr<Session> > sessions_;
 	shared_ptr<Session> last_focused_session_;
+	std::vector< shared_ptr<QTemporaryDir> > workspace_temp_dirs_;
 
 	map< QDockWidget*, shared_ptr<views::ViewBase> > view_docks_;
 	map< QDockWidget*, shared_ptr<subwindows::SubWindowBase> > sub_windows_;
@@ -184,12 +193,12 @@ private:
 	QIcon icon_reload_;
 
 	// Menu bar actions synced to active session/view
+	QAction *menu_action_open_workspace_;
+	QAction *menu_action_save_workspace_;
+	QAction *menu_action_save_current_session_;
 	QAction *menu_action_open_;
-	QAction *menu_action_save_;
 	QAction *menu_action_save_as_;
 	QAction *menu_action_save_selection_as_;
-	QAction *menu_action_restore_setup_;
-	QAction *menu_action_save_setup_;
 	QMenu *menu_import_;
 	QMenu *menu_export_;
 

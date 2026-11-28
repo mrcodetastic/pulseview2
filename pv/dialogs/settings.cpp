@@ -263,10 +263,6 @@ QWidget *Settings::get_general_settings_form(QWidget *parent) const
 	general_layout->addRow(tr("Qt widget style"), style_cb);
 
 	// Misc
-	cb = create_checkbox(GlobalSettings::Key_General_SaveWithSetup,
-		SLOT(on_general_save_with_setup_changed(int)));
-	general_layout->addRow(tr("Save session &setup along with .sr file"), cb);
-
 	cb = create_checkbox(GlobalSettings::Key_General_StartAllSessions,
 		SLOT(on_general_start_all_sessions_changed(int)));
 	general_layout->addRow(tr("Start acquisition for all open sessions when clicking 'Run'"), cb);
